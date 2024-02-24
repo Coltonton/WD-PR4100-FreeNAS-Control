@@ -20,4 +20,13 @@
 
  Feel free to modify any of the scripts at your will and risk, a few things can be easily modified like PowerLED color, state, and Welcome Text. (Info on later, I do have some in the comments) 
 
+## Added Features:
+- Easy LED Control
+- An actual Fan control profile (may need tuning use at your own risk)
+- Scripts for Pre-Init / Shutdown
+- Auto Dim Display 
+
+## To Add:
+- Maybe a full on device menu?
+- Make easier for users to edit custom stuff / give options?
 
