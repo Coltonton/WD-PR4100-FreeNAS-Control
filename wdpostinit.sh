@@ -305,7 +305,7 @@ init() {
     send VER
     send CFG 
     send STA
-    led SOLID PUR
+    led SOLID BLU
     show_welcome
 }
 
