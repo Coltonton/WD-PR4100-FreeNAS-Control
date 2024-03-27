@@ -1,40 +1,64 @@
 #!/bin/bash
 #
-# Shutdown script for FreeNAS on Western Digital PR2100/PR4100 
+# Main Control script for Free/TrueNAS CORE & SCALE on Western Digital PR2100?/PR4100 
 # Based off wdhws v1.0 by TFL (stefaang)
-# wdpostinit V1.0 by Coltonton
+#
+# wdpreinit V1.1 by Coltonton
+#    - Fixed Some Typos/Cleaned up while I was here
+#    - Added Support For TrueNAS Scale as well as TrueNAS CORE
+#    - More Comments = More Better
 # 
 # BSD 3 LICENSE (inherited from TFL)
-#
-# thanks unix stackexchange question 231975 & github user @stefaang
-
+# Thanks unix stackexchange question 231975 & github user @stefaang
 
 ############### COMMAND LIST ###############
 # THING          COMMAND       USE
-# FAN            FAN=64        Enter Hax value 01-64 (1-100%) Use at your own risk, only you can prevent forest fires
+# FAN            FAN=64        Enter Hex value 01-64 (1-100%) Use at your own risk, only you can prevent forest fires
 # USB/Power LED  LED=13        (See LED Guide)
 # PowerLED-Pulse PLS=01        00-off 01-on (cant change color? is always blue?)
 # PowerLED-Blink BLK=01        (See LED Guide)
-# LCDBacklight   BKL=64        Enter Hax value 00-64 (0-100%)
-#                RPM=01fe
+# LCDBacklight   BKL=64        Enter Hex value 00-64 (0-100%)
+#                
 # 
 # To complete?
 
-################ LED GUIDE ################
+################ LED GUIDE #################
 #XX-usb/pwr
 #00-off/off 01-off/blue 02-off/red 03-off/purple 04-off/green 05-off/teal 06-off/yellow 07-off/White
 #08-red/off 09-red/blue 0A-red/red 0B-red/purple 0C-red/green 0D-red/teal 0E-red/yellow 0F-red/White
 #10-blue/off 11-blue/blue 12-blue/red 13-blue/purple 14-blue/green 15-blue/teal 16-blue/yellow 17-blue/White
 #18-purple/off 19-purple/blue 1A-purple/red 1B-purple/purple 1C-purple/green 1D-purple/teal 1E-purple/yellow 1F-purple/White
 
-################ VARS #################
-minfanspeed=30 #Percent
-maxcputemp=80 
-opptemp=35
+###########################################################################
+#############################   VARS   ####################################
+###########################################################################
+minfanspeed=30    # Minimum fan speed in percent
+maxcputemp=80     # Maximum CPU temp before going full beans
+opptemp=35        # Optimal (desired) temp (commie C degrees not freedom F :( )
+tty=/dev/ttyS2    # Used to init variable, gets changed based on kernal in get_i2c_TTY()
 
+
+###########################################################################
+#############################   FUNCS   ###################################
+###########################################################################
+get_i2c_TTY(){
+    getVer=$(uname -s)           # Get Linux Kernal (Linux vs FreeBSD for TrueNas Scal/Core)
+    if [ $getVer == 'FreeBSD' ]  # If FreeBSD Free/TrueNAS Core
+    then
+        echo Found FreeBSD 
+        tty=/dev/cuau3             # FreeBSD uses /dev/cuau3 for i2C coms
+    elif [ $getVer == 'Linux' ]  # If Linux Free/TrueNAS Scale
+    then
+        echo Found Linux
+        tty=/dev/ttyS2             # Linux uses much cooler (telatype) /dev/ttyS2 for i2C coms
+    else                         # Just in case to catch wrong systems
+        echo ERROR: Detected Kernal Type Does Not Match Any Supported By This Program
+        echo Or there was an error
+        exit 
+    fi
+}
 
 setup_tty() {
-    tty=/dev/cuau3
     exec 4<$tty 5>$tty
 }
 
@@ -100,18 +124,6 @@ get_pmc() {
     # get a value from the PMC
     # e.g. TMP returns TMP=25 --> 25
     send $1 | cut -d'=' -f2
-}
-
-init() {
-    setup_tty
-    setup_i2c
-
-    echo "Getting system status and firmware!"
-    send VER
-    send CFG 
-    send STA
-    led SOLID PUR
-    show_welcome
 }
 
 show_welcome() {
@@ -259,12 +271,10 @@ check_btn_pressed() {
     
     case $btn in
     20*)
-        send BKL=FF
         echo "Button up pressed!"
         menu=$(( ($menu + 1) % 3 ))
         ;;
     40*) 
-        send BKL=FF
         echo "Button down pressed!"
         menu=$(( ($menu + 2) % 3 ))
         ;;
@@ -286,6 +296,20 @@ check_btn_pressed() {
     esac        
 }
 
+init() {
+    get_i2c_TTY
+    setup_tty
+    setup_i2c
+
+    echo "Getting system status and firmware!"
+    send VER
+    send CFG 
+    send STA
+    led SOLID BLU
+    show_welcome
+}
+
+
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
@@ -294,8 +318,6 @@ init
 while true; do
     # adjust fan speed every 30 seconds
     monitor
-    # dim display every 30 seconds
-    send BKL=30
 
     # check for button presses
     for i in $(seq 10); do 

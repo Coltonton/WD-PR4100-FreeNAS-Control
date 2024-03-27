@@ -1,22 +1,61 @@
 #!/bin/bash
 #
-# Shutdown script for FreeNAS on Western Digital PR2100/PR4100 
+# Pre Initialization script for Free/TrueNAS CORE & SCALE on Western Digital PR2100?/PR4100 
 # Based off wdhws v1.0 by TFL (stefaang)
-# wdpreinit V1.0 by Coltonton
+#
+# wdpreinit V1.1 by Coltonton
+#    - Fixed Some Typos/Cleaned up while I was here
+#    - Added Support For TrueNAS Scale as well as TrueNAS CORE
+#    - More Comments = More Better
 # 
 # BSD 3 LICENSE (inherited from TFL)
-#
-# thanks unix stackexchange question 231975 & github user @stefaang
+# Thanks unix stackexchange question 231975 & github user @stefaang
 
-################ LED GUIDE ################
+############### COMMAND LIST ###############
+# THING          COMMAND       USE
+# FAN            FAN=64        Enter Hex value 01-64 (1-100%) Use at your own risk, only you can prevent forest fires
+# USB/Power LED  LED=13        (See LED Guide)
+# PowerLED-Pulse PLS=01        00-off 01-on (cant change color? is always blue?)
+# PowerLED-Blink BLK=01        (See LED Guide)
+# LCDBacklight   BKL=64        Enter Hex value 00-64 (0-100%)
+#                
+# 
+# To complete?
+
+################ LED GUIDE ################$
 #XX-usb/pwr
 #00-off/off 01-off/blue 02-off/red 03-off/purple 04-off/green 05-off/teal 06-off/yellow 07-off/White
 #08-red/off 09-red/blue 0A-red/red 0B-red/purple 0C-red/green 0D-red/teal 0E-red/yellow 0F-red/White
 #10-blue/off 11-blue/blue 12-blue/red 13-blue/purple 14-blue/green 15-blue/teal 16-blue/yellow 17-blue/White
 #18-purple/off 19-purple/blue 1A-purple/red 1B-purple/purple 1C-purple/green 1D-purple/teal 1E-purple/yellow 1F-purple/White
 
+###########################################################################
+#############################   VARS   ####################################
+###########################################################################
+tty=/dev/ttyS2  # Used to init variable
+
+
+###########################################################################
+#############################   FUNCS   ###################################
+###########################################################################
+get_i2c_TTY(){
+    getVer=$(uname -s)           # Get Linux Kernal (Linux vs FreeBSD for TrueNas Scal/Core)
+    if [ $getVer == 'FreeBSD' ]  # If FreeBSD Free/TrueNAS Core
+    then
+        echo Found FreeBSD 
+        tty=/dev/cuau3             # FreeBSD uses /dev/cuau3 for i2C coms
+    elif [ $getVer == 'Linux' ]  # If Linux Free/TrueNAS Scale
+    then
+        echo Found Linux
+        tty=/dev/ttyS2             # Linux uses much cooler (telatype) /dev/ttyS2 for i2C coms
+    else                         # Just in case to catch wrong systems
+        echo ERROR: Detected Kernal Type Does Not Match Any Supported By This Program
+        echo Or there was an error
+        exit 
+    fi
+}
+
 setup_tty() {
-    tty=/dev/cuau3
     exec 4<$tty 5>$tty
 }
 
@@ -60,9 +99,9 @@ send_empty() {
 
 show_msg() {
     # set welcome message
-    # maximum  "xxx xxx xxx xxx " 
-    send   "LN1=    FreeNAS     "
-    send   "LN2=   Loading...   " 
+    # maximum  "xxx xxx xxx xxx " (16 chars) 
+    send   "LN1=    TrueNAS     "
+    send   "LN2=  Starting...   " 
 }
 
 led(){
@@ -116,10 +155,10 @@ led(){
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
-setup_tty
-setup_i2c
+get_i2c_TTY     # Get TTY device
+setup_tty       # Setup TTY
+setup_i2c       # Settup i2C
 
-led FLASH YLW
-show_msg
-
-
+send FAN=64     # Set fan 100% to be safe
+led FLASH YLW   # Set the Power LED to flash yellow as visual indicator
+show_msg        # Set the LCD Display Text 
