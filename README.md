@@ -1,6 +1,13 @@
-# --InDev--
+# --InDev-- 
 
 ![Drag Racing](https://m.media-amazon.com/images/I/8127BVaefIL.jpg)
+
+Version 1.1 (03-26-2024)
+========================
+* Added Support for Linux based TrueNAS Scale along side TrueNAS Core for PR4100 as per the request and help of @SuperDope & @nestandi
+* Fixed Some Typos/Cleaned up while here
+* More Comments = More Better
+
 # WD PR4100 FreeNAS Hardware Control
  Hardware control for the WD PR4100 running [@stefaang's](https://github.com/stefaang) Freenas found [HERE](https://community.wd.com/t/firmware-freenas-on-pr4100-updated/218730). All work is based off his basic hardware control script found [here](https://gist.github.com/stefaang/0a23a25460f65086cbec0db526e87b03). I've simply made it better/more functional 
 
@@ -21,10 +28,10 @@
  Feel free to modify any of the scripts at your will and risk, a few things can be easily modified like PowerLED color, state, and Welcome Text. (Info on later, I do have some in the comments) 
 
 ## Added Features:
+- TrueNAS Scale Support 
 - Easy LED Control
 - An actual Fan control profile (may need tuning use at your own risk)
-- Scripts for Pre-Init / Shutdown
-- Auto Dim Display 
+- Seperate Scripts for Pre-Init / Post-Init(main) / Shutdown
 
 ## To Add:
 - Maybe a full on device menu?
