@@ -32,25 +32,25 @@
 ###########################################################################
 #########################   DO NOT TOUCH   ################################
 ###########################################################################
-fanSpeedMinimum=30 # Minimum allowed fan speed in percent
+fanSpeedMinimum=35 # Minimum allowed fan speed in percent
 cpuOptimalTemp=35  # Optimal (desired) temp for CPU (commie C degrees not freedom F :()
 cpuMaxTemp=80      # Maximum CPU temp before going full beans
 diskMaxTemp=40     # Maximum DISK temp before going full beans
 ramMaxTemp=40      # Maximum RAM temp before going full beans
-checkRate=15
+updateRate=10      # How often in seconds to update temps
 
 ###########################################################################
 #############################   VARS   ####################################
 ###########################################################################
-datetime=()
-#oskernal=''       # Used to init kernal variable, gets changed based on kernal in get_sys_info()
-hwSystem=Linux
-hwTTY=/dev/cuau3             # Used to init tty variable, gets changed based on kernal in get_sys_info()
-hwHDD=/
+datetime=()     
+hwSystem=Linux                # Used to init kernal variable, gets changed based on kernal in get_sys_info()
+hwTTY=/dev/cuau3              # Used to init tty variable, gets changed based on kernal in get_sys_info()
+hwHDD=/dev/ada
 hddarray=()
+hwCPUCoreCount=0
 hwOverTempAlarm=0
 hwOverTempArray=()
-hwCPUCoreCount=2
+
 
 
 
@@ -58,8 +58,8 @@ hwCPUCoreCount=2
 #############################   FUNCS   ###################################
 ###########################################################################
 
-check_for_smartctl(){
-    #simple just-to-be-safe check that SMART Mon exists
+check_for_smartctl(){   # Simple just-to-be-safe check that SMART Mon exists
+    
     smartctl -v >/dev/null
     if [[ $? != 1 ]]; then
         printf "\n** SMART not installed please run - sudo apt install smartmontools ** \n\n "
@@ -67,7 +67,7 @@ check_for_smartctl(){
     fi
 }
 
-get_sys_info(){
+get_sys_info(){         # Get system info based off kernal, as BSD/LINUX has not the same commands
     case "$( uname -s )" in        # Get Linux Kernal (Linux vs FreeBSD for TrueNas Scale/Core)
         Linux*)  hwSystem=Linux;;
         *BSD)	 hwSystem=BSD;;
@@ -78,37 +78,33 @@ get_sys_info(){
     esac
     echo $hwSystem
     if [[ ! $hwSystem =~ Linux|BSD ]]; then  # If system is not Linux or *BSD Show unsupported message
-        echo "This version of WD PR4100 Hawrdware does not support $hwSystem platform."
+        echo "This software version for the WD PR4100 Hawrdware does not support $hwSystem platform."
         exit 1
     fi          
-    if [ $hwSystem == BSD ]; then      # If FreeBSD Free/TrueNAS Core
-        echo '# Detected BSD Kernal #'
-        hwTTY=/dev/cuau3             # FreeBSD uses /dev/cuau3 for i2C comms to PR4100 front hardware
-        hwHDD=/dev/ada               # FreeBSD uses /dev/ada$ for hard drive locations
-        hddarray=('0' '1' '2' '3')
-        #sysctl -n hw.ncpu
-        #hwCPUCoreCount= echo sysctl -n hw.ncpu
-        #echo $hwCPUCoreCount
+    if [ $hwSystem == BSD ]; then      # If *BSD Free/TrueNAS Core
+        echo '# Detected BSD Kernal #'      # Show what kernal was identified
+        hwTTY=/dev/cuau3                    # FreeBSD uses /dev/cuau3 for i2C comms to PR4100 front hardware
+        hwHDD=/dev/ada                      # FreeBSD uses /dev/ada$ for hard drive locations
+        hddarray=('0' '1' '2' '3')          # Drive designation BSD is numerical 0-3 in case of 4 bad PR4100
+        hwCPUCoreCount=$(sysctl -n hw.ncpu) # Get how many CPU cores
     elif [ $hwSystem == Linux ]; then  # If Linux Free/TrueNAS Scale
-        echo '# Detected Linux Kernal #'
-        hwTTY=/dev/ttyS2             # Linux uses much cooler (telatype) /dev/hwTTYS2 for i2C comms to PR4100 front hardware
-        hwHDD=/dev/sd                # Linux uses /dev/sd$ for hard drive locations
-        hddarray=("a" "b" "c" "d")
-        #hwCPUCoreCount=$(nproc)
+        echo '# Detected Linux Kernal #'    # Show what kernal was identified
+        hwTTY=/dev/ttyS2                    # Linux uses much cooler (telatype) /dev/hwTTYS2 for i2C comms to PR4100 front hardware
+        hwHDD=/dev/sd                       # Linux uses /dev/sd$ for hard drive locations
+        hddarray=("a" "b" "c" "d")          # Drive designation Linux is alphabetical a - d in case of 4 bad PR4100
+        hwCPUCoreCount=$(nproc)             # Get how many CPU cores
     fi
 }
 
-setup_tty() {
-    #hwTTY=/dev/cuau3
+setup_tty() {           # Start i2c
     exec 4<$hwTTY 5>$hwTTY
 }
 
-setup_i2c() {
-    # load kernel modules required for the temperature sensor on the RAM modules
+setup_i2c() {           # load kernel modules required for the temperature sensor on the RAM modules
     kldload -n iicbus smbus smb ichsmb
 }
 
-send() {
+send() {                # Requires input - i2C send function to send commands to front panel
     setup_tty
     # send a command to the PMC module and echo the answer
     echo -ne "$1\r" >&5
@@ -130,18 +126,20 @@ send() {
         echo "CMD $1 gives '$ans' at $2" >&2 
     fi 
     echo $ans
+    
     send_empty
     # deconstruct tty file pointers, otherwise this script breaks on sleep 
     exec 4<&- 5>&-
+
 }
 
-send_empty() {
+send_empty() {          # i2c send blank to clear front panel input
     # send a empty command to clear the output
     echo -ne "\r" >&5
     read ignore <&4
 }
 
-get_datetime() {
+get_datetime() {        # Duh.... Sorry lol, easy time/date vars cuz cleaner
     datetime[1]=$(date +"%m")
     datetime[2]=$(date +"%d")
     datetime[3]=$(date +"%y")
@@ -150,33 +148,17 @@ get_datetime() {
     datetime[6]=$(date +"%S") 
 }
 
-get_pmc() {
-    # get a value from the PMC
-    # e.g. TMP returns TMP=25 --> 25
+get_pmc() {             # Requires input - Get a value from the PMC ex. inputing RPM gets fan0's rpm
     send $1 | cut -d'=' -f2
 }
 
-get_disktemp() {
-    # get the disk $i temperature only if it is spinning
-    drivenum=$1
-    #smartctl -n standby -A /dev/ada0 | grep Temperature_Celsius | awk '{print $10}'
-    if [ $hwSystem == BSD ]; then
+get_disktemp() {        # Requires input - Get the disks temperature only if it is active, else return status
+    drivenum=$1  # For some reason i need this and cant put it in later? Makes i2c break somehow...
+    getstatus=$(smartctl -n standby -A $hwHDD"$drivenum"> /dev/null && echo $?) # See if there is and drive exit status
+    if [ $getstatus == 0 ]; then  # If the status of the drive is active, get its temperature
         smartctl -n standby -A $hwHDD"$drivenum"| grep Temperature_Celsius | awk '{print $10}'
-    elif [ $hwSystem == Linux ]; then
-        echo todo
-    fi
-    
-}
-
-get_cpunum() {
-    # get the number of CPUs
-    if [ $hwSystem == BSD ]; then
-        
-        hwCPUCoreCount=$(sysctl -n hw.ncpu)
-        echo $hwCPUCoreCount
-
-    elif [ $hwSystem == Linux ]; then
-        nproc 
+    else  # If the status of the drive is not active, return the exit status of the drive. Maybe its asleep/standby                
+        return $getstatus
     fi
 }
 
@@ -199,20 +181,21 @@ get_ramtemp() {
     fi
 }
 
-monitor() {
+monitor() {             # TODO / Comment
     # check RPM (fan may get stuck) and convert hex to dec
-    #fan=$(get_pmc FAN)
-    rpm=1000 # $((0x$(get_pmc RPM)))
-    echo "FAN 0 RPM: $rpm"
-    if [ "$rpm" != ERR ]; then
-        if [ "$rpm" -lt 400 ]; then
-            echo "FAN 0 RPM WARNING: low RPM - $rpm - clean dust!"
+    #readfanpercent=$(get_pmc FAN)
+    rpmhex=$(get_pmc RPM)
+    rpmdec=$((0x$rpmhex))
+    echo "FAN 0 RPM: $rpmdec"
+    if [ "$rpmdec" != ERR ]; then
+        if [ "$rpmdec" -lt 400 ]; then
+            echo "FAN 0 RPM WARNING: low RPM - $rpmdec - clean dust!"
             set_pwr_led FLASH RED
         fi
     fi
     
     # Check the Temperature of the PMC  
-    tmp=50 # $((0x$(get_pmc TMP)))
+    tmp=$((0x$(get_pmc TMP)))
     if [ "$tmp" -gt 64 ]; then
         echo "WARNING: PMC surpassed maximum (64°C), full throttle activated!"
         hwOverTempAlarm=1 
@@ -226,13 +209,22 @@ monitor() {
     printf "|------ DISK TEMPS ------\n"
     for i in "${hddarray[@]}" ; do
         tmp=$(get_disktemp $i)
-        echo "| $hwHDD$i is $tmp °C"
-        if [ ! -z $tmp ] && [ $tmp -gt $diskMaxTemp ]; then
-        #if [ ! -z $tmp ] && [ "$tmp" -gt 0 ]; then
-            echo "| WARNING: CPU Core$i surpassed maximum ($diskMaxTemp°C), full throttle activated!" 
-            hwOverTempAlarm=1
-            #hwOverTempArray+=("HDD$i $tmp°C/$hddMaxTemp°C")
-        fi
+        waserror=$(echo $?)
+        if [ $waserror -ne "0" ]; then
+            if [ $waserror == 2 ]; then
+                ret=Standby
+            else
+                ret=Error
+            fi
+            echo "| $hwHDD$i is in $ret status"
+        else
+            echo "| $hwHDD$i is $tmp°C"
+            if [ ! -z $tmp ] && [ $tmp -gt $diskMaxTemp ]; then
+                echo "| WARNING: CPU Core$i surpassed maximum ($diskMaxTemp°C), full throttle activated!" 
+                hwOverTempAlarm=1
+                #hwOverTempArray+=("HDD$i $tmp°C/$hddMaxTemp°C")
+            fi
+        fi  
     done
     printf "|------------------------\n"
 
@@ -256,10 +248,7 @@ monitor() {
     #Max-80 Optimal-35 1.5% = for every degree above 30%      80-35=45         100-30=70             70/45=1.5   
     newtmp=$(("$cpuhightmp"-"$cpuOptimalTemp"))  #MaxTemp 
     setspeed=$(("$newtmp"*2+"$fanSpeedMinimum"-5))
-    echo "Speed should be: $setspeed%"
-    if [ $setspeed -lt $fanSpeedMinimum ]; then
-            setspeed=$fanSpeedMinimum
-    fi
+    
  
     # Check the installed RAM Temperature
     printf "|------ RAM TEMPS -------\n"
@@ -283,7 +272,12 @@ monitor() {
         #write_logdata
         
     else
-        echo "Fan speed below minimum allowed, bumping to $fanSpeedMinimum%..."
+        if [ $setspeed -lt $fanSpeedMinimum ]; then
+            echo "Computed fan speed below minimum allowed, bumping to $fanSpeedMinimum%..."
+            setspeed=$fanSpeedMinimum
+        else
+            echo "Setting fan speed to: $setspeed%"
+        fi
         send FAN=$setspeed              # Set fan to mathed speed if not overtemped
     fi
 }
@@ -403,11 +397,11 @@ init
 while true; do
     # adjust fan speed every 30 seconds
     monitor
+    echo "Next temp update in $updateRate seconds"
 
     # check for button presses
-    for i in $(seq 10); do 
+    for i in $(seq $updateRate); do 
         sleep 1
         check_btn_pressed
     done
 done
-
