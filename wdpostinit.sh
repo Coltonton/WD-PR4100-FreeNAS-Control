@@ -3,11 +3,11 @@
 # Main Control script for Free/TrueNAS CORE & SCALE on Western Digital PR2100?/PR4100 
 # Based off wdhws v1.0 by TFL (stefaang)
 #
-# wdpreinit V1.1 by Coltonton
+# wdpreinit V1.1.1 by Coltonton
 #    - Fixed Some Typos/Cleaned up while I was here
 #    - Added Support For TrueNAS Scale as well as TrueNAS CORE
 #    - More Comments = More Better
-# 
+#  
 # BSD 3 LICENSE (inherited from TFL)
 # Thanks unix stackexchange question 231975 & github user @stefaang
 
@@ -30,36 +30,77 @@
 #18-purple/off 19-purple/blue 1A-purple/red 1B-purple/purple 1C-purple/green 1D-purple/teal 1E-purple/yellow 1F-purple/White
 
 ###########################################################################
+#########################   DO NOT TOUCH   ################################
+###########################################################################
+fanSpeedMinimum=30 # Minimum allowed fan speed in percent
+cpuOptimalTemp=35  # Optimal (desired) temp for CPU (commie C degrees not freedom F :()
+cpuMaxTemp=80      # Maximum CPU temp before going full beans
+diskMaxTemp=40     # Maximum DISK temp before going full beans
+ramMaxTemp=40      # Maximum RAM temp before going full beans
+checkRate=15
+
+###########################################################################
 #############################   VARS   ####################################
 ###########################################################################
-minfanspeed=30    # Minimum fan speed in percent
-maxcputemp=80     # Maximum CPU temp before going full beans
-opptemp=35        # Optimal (desired) temp (commie C degrees not freedom F :( )
-tty=/dev/ttyS2    # Used to init variable, gets changed based on kernal in get_i2c_TTY()
+datetime=()
+#oskernal=''       # Used to init kernal variable, gets changed based on kernal in get_sys_info()
+hwSystem=Linux
+hwTTY=/dev/cuau3             # Used to init tty variable, gets changed based on kernal in get_sys_info()
+hwHDD=/
+hddarray=()
+hwOverTempAlarm=0
+hwOverTempArray=()
+hwCPUCoreCount=2
+
 
 
 ###########################################################################
 #############################   FUNCS   ###################################
 ###########################################################################
-get_i2c_TTY(){
-    getVer=$(uname -s)           # Get Linux Kernal (Linux vs FreeBSD for TrueNas Scal/Core)
-    if [ $getVer == 'FreeBSD' ]  # If FreeBSD Free/TrueNAS Core
-    then
-        echo Found FreeBSD 
-        tty=/dev/cuau3             # FreeBSD uses /dev/cuau3 for i2C coms
-    elif [ $getVer == 'Linux' ]  # If Linux Free/TrueNAS Scale
-    then
-        echo Found Linux
-        tty=/dev/ttyS2             # Linux uses much cooler (telatype) /dev/ttyS2 for i2C coms
-    else                         # Just in case to catch wrong systems
-        echo ERROR: Detected Kernal Type Does Not Match Any Supported By This Program
-        echo Or there was an error
-        exit 
+
+check_for_smartctl(){
+    #simple just-to-be-safe check that SMART Mon exists
+    smartctl -v >/dev/null
+    if [[ $? != 1 ]]; then
+        printf "\n** SMART not installed please run - sudo apt install smartmontools ** \n\n "
+        exit
+    fi
+}
+
+get_sys_info(){
+    case "$( uname -s )" in        # Get Linux Kernal (Linux vs FreeBSD for TrueNas Scale/Core)
+        Linux*)  hwSystem=Linux;;
+        *BSD)	 hwSystem=BSD;;
+        Darwin*) hwSystem=MacOS;;
+        CYGWIN*) hwSystem=Cygwin;;
+        MINGW*)  hwSystem=MinGw;;
+        *)       hwSystem="Other"
+    esac
+    echo $hwSystem
+    if [[ ! $hwSystem =~ Linux|BSD ]]; then  # If system is not Linux or *BSD Show unsupported message
+        echo "This version of WD PR4100 Hawrdware does not support $hwSystem platform."
+        exit 1
+    fi          
+    if [ $hwSystem == BSD ]; then      # If FreeBSD Free/TrueNAS Core
+        echo '# Detected BSD Kernal #'
+        hwTTY=/dev/cuau3             # FreeBSD uses /dev/cuau3 for i2C comms to PR4100 front hardware
+        hwHDD=/dev/ada               # FreeBSD uses /dev/ada$ for hard drive locations
+        hddarray=('0' '1' '2' '3')
+        #sysctl -n hw.ncpu
+        #hwCPUCoreCount= echo sysctl -n hw.ncpu
+        #echo $hwCPUCoreCount
+    elif [ $hwSystem == Linux ]; then  # If Linux Free/TrueNAS Scale
+        echo '# Detected Linux Kernal #'
+        hwTTY=/dev/ttyS2             # Linux uses much cooler (telatype) /dev/hwTTYS2 for i2C comms to PR4100 front hardware
+        hwHDD=/dev/sd                # Linux uses /dev/sd$ for hard drive locations
+        hddarray=("a" "b" "c" "d")
+        #hwCPUCoreCount=$(nproc)
     fi
 }
 
 setup_tty() {
-    exec 4<$tty 5>$tty
+    #hwTTY=/dev/cuau3
+    exec 4<$hwTTY 5>$hwTTY
 }
 
 setup_i2c() {
@@ -100,30 +141,151 @@ send_empty() {
     read ignore <&4
 }
 
-get_ncpu() {
-    # get the number of CPUs
-    sysctl -n hw.ncpu
-}
-
-get_coretemp() {
-    # get the CPU temperature and strip of the Celsius
-    sysctl -n dev.cpu.$1.temperature | cut -d'.' -f1
-}
-
-get_disktemp() {
-    # get the disk $i temperature only if it is spinning
-    smartctl -n standby -A /dev/ada0 | grep Temperature_Celsius | awk '{print $10}'
-}
-
-get_ramtemp() {
-    # get the memory temperature from the I2C sensor
-    smbmsg -s 0x98 -c 0x0$1 -i 1 -F %d
+get_datetime() {
+    datetime[1]=$(date +"%m")
+    datetime[2]=$(date +"%d")
+    datetime[3]=$(date +"%y")
+    datetime[4]=$(date +"%H")
+    datetime[5]=$(date +"%M")
+    datetime[6]=$(date +"%S") 
 }
 
 get_pmc() {
     # get a value from the PMC
     # e.g. TMP returns TMP=25 --> 25
     send $1 | cut -d'=' -f2
+}
+
+get_disktemp() {
+    # get the disk $i temperature only if it is spinning
+    drivenum=$1
+    #smartctl -n standby -A /dev/ada0 | grep Temperature_Celsius | awk '{print $10}'
+    if [ $hwSystem == BSD ]; then
+        smartctl -n standby -A $hwHDD"$drivenum"| grep Temperature_Celsius | awk '{print $10}'
+    elif [ $hwSystem == Linux ]; then
+        echo todo
+    fi
+    
+}
+
+get_cpunum() {
+    # get the number of CPUs
+    if [ $hwSystem == BSD ]; then
+        
+        hwCPUCoreCount=$(sysctl -n hw.ncpu)
+        echo $hwCPUCoreCount
+
+    elif [ $hwSystem == Linux ]; then
+        nproc 
+    fi
+}
+
+get_cpucoretemp() {
+    # get the CPU temperature and strip of the Celsius
+    if [ $hwSystem == BSD ]; then
+        sysctl -n dev.cpu.$1.temperature | cut -d'.' -f1
+    elif [ $hwSystem == Linux ]; then
+        echo todo
+    fi
+    
+}
+
+get_ramtemp() {
+    # get the memory temperature from the I2C sensor
+    if [ $hwSystem == BSD ]; then
+        smbmsg -s 0x98 -c 0x0$1 -i 1 -F %d
+    elif [ $hwSystem == Linux ]; then
+        echo todo
+    fi
+}
+
+monitor() {
+    # check RPM (fan may get stuck) and convert hex to dec
+    #fan=$(get_pmc FAN)
+    rpm=1000 # $((0x$(get_pmc RPM)))
+    echo "FAN 0 RPM: $rpm"
+    if [ "$rpm" != ERR ]; then
+        if [ "$rpm" -lt 400 ]; then
+            echo "FAN 0 RPM WARNING: low RPM - $rpm - clean dust!"
+            set_pwr_led FLASH RED
+        fi
+    fi
+    
+    # Check the Temperature of the PMC  
+    tmp=50 # $((0x$(get_pmc TMP)))
+    if [ "$tmp" -gt 64 ]; then
+        echo "WARNING: PMC surpassed maximum (64°C), full throttle activated!"
+        hwOverTempAlarm=1 
+        #hwOverTempArray+=("PMC $tmp°C/64°C")
+    else
+        echo "PMC -ok"
+    fi
+
+    # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
+    cpuhightmp=0
+    printf "|------ DISK TEMPS ------\n"
+    for i in "${hddarray[@]}" ; do
+        tmp=$(get_disktemp $i)
+        echo "| $hwHDD$i is $tmp °C"
+        if [ ! -z $tmp ] && [ $tmp -gt $diskMaxTemp ]; then
+        #if [ ! -z $tmp ] && [ "$tmp" -gt 0 ]; then
+            echo "| WARNING: CPU Core$i surpassed maximum ($diskMaxTemp°C), full throttle activated!" 
+            hwOverTempAlarm=1
+            #hwOverTempArray+=("HDD$i $tmp°C/$hddMaxTemp°C")
+        fi
+    done
+    printf "|------------------------\n"
+
+    # Check the Temperature of the CPU
+    printf "|---- CPU CORE TEMPS ----\n"
+    for i in $(seq $hwCPUCoreCount); do
+        tmp=$(get_cpucoretemp $((i-1)))
+        echo "| cpu core$i is $tmp °C"
+        if [ $tmp -gt $cpuMaxTemp ]; then
+            echo "| WARNING: CPU Core$i surpassed maximum ($cpuMaxTemp°C), full throttle activated!"
+            #hwOverTempArray+=("CPU$i $tmp°C/$cpuMaxTemp°C")
+            hwOverTempAlarm=1
+        fi
+        if [ $tmp -gt $cpuhightmp ]; then
+            cpuhightmp=$tmp
+        fi
+    done
+    printf "|------------------------\n"
+    echo "Highest CPU core temp is $cpuhightmp °C"
+    #                                                       max-opperating=a   fullfan-minfan=b    b/a= fan percent per degree
+    #Max-80 Optimal-35 1.5% = for every degree above 30%      80-35=45         100-30=70             70/45=1.5   
+    newtmp=$(("$cpuhightmp"-"$cpuOptimalTemp"))  #MaxTemp 
+    setspeed=$(("$newtmp"*2+"$fanSpeedMinimum"-5))
+    echo "Speed should be: $setspeed%"
+    if [ $setspeed -lt $fanSpeedMinimum ]; then
+            setspeed=$fanSpeedMinimum
+    fi
+ 
+    # Check the installed RAM Temperature
+    printf "|------ RAM TEMPS -------\n"
+    for i in 0 1; do
+        tmp=$(get_ramtemp $i)
+        echo "| ram$i temp is $tmp °C"
+        if [ "$tmp" -gt $ramMaxTemp ]; then
+        #if [ "$tmp" -gt 0 ]; then
+            echo "| WARNING: RAM$i surpassed maximum ($ramMaxTemp°C), full throttle activated!"
+            #hwOverTempArray+=("RAM $tmp°C/$ramMaxTemp°C")
+            hwOverTempAlarm=1
+        fi
+    done 
+
+    if [ ${#hwOverTempArray[@]} -gt 0 ] || [ $hwOverTempAlarm == 1 ]; then
+        echo " WARNING: SYSTEM OVER LIMIT TEMPERATURE(s) FAN SET TO 100% "
+        hwOverTempAlarm=1               # Flag System Over Temp-ed
+        #hwLastOverTemp=$(get_datetime)  # Save the time when the system over temped
+        send FAN=64                     # Full Beans Fan 100%
+        set_pwr_led FLASH RED           # Flash Power LED RED to warn
+        #write_logdata
+        
+    else
+        echo "Fan speed below minimum allowed, bumping to $fanSpeedMinimum%..."
+        send FAN=$setspeed              # Set fan to mathed speed if not overtemped
+    fi
 }
 
 show_welcome() {
@@ -133,7 +295,44 @@ show_welcome() {
     send   "LN2=    Running     " 
 }
 
-led(){
+show_ip() {
+    send "LN1=Interface re$1"
+    ip=$(ifconfig ""re$1"" | grep inet | awk '{printf $2}')
+    send "LN2=$ip"
+}
+
+check_btn_pressed() {
+    btn=$(get_pmc ISR) 
+    #echo "Btn is .$btn."
+    
+    case $btn in
+    20*)
+        echo "Button up pressed!"
+        menu=$(( ($menu + 1) % 3 ))
+        ;;
+    40*) 
+        echo "Button down pressed!"
+        menu=$(( ($menu + 2) % 3 ))
+        ;;
+    *)
+        return    
+    esac
+    
+    case "$menu" in
+    0)
+        show_welcome
+        ;;
+    1)
+        show_ip 0
+        ;;
+    2)
+        show_ip 1
+        ;;
+    # if you add menu items here, update mod 3 uses above    
+    esac        
+}
+
+set_pwr_led(){
     #echo "PowerMode:$1 - PowerColor:$2 - UsbMode:$3 - UsbColor$4"
     if [ "$1" == SOLID ]; then
         send BLK=00
@@ -181,123 +380,8 @@ led(){
     fi  
 }
 
-show_ip() {
-    send "LN1=Interface re$1"
-    ip=$(ifconfig re$1 | grep inet | awk '{printf $2}')
-    send "LN2=$ip"
-}
-
-monitor() {
-    lvl="COOL"
-    cpumaxtmp=0
-    minfanspeed=30 #Percent
-    maxcputemp=80 
-    opptemp=35
-
-    # check RPM (fan may get stuck) and convert hex to dec
-    fan=$(get_pmc FAN)
-    rpm=$((0x$(get_pmc RPM)))
-    echo "Got rpm $rpm"
-    if [ "$rpm" != ERR ]; then
-        if [ "$rpm" -lt 400 ]; then
-            echo "WARNING: low RPM - $rpm - clean dust!"
-            led FLASH RED
-        fi
-    fi
-    
-    # check pmc  
-    tmp=$((0x$(get_pmc TMP)))
-    if [ "$tmp" -gt 64 ]; then
-        pmclvl="HOT"
-    fi
-
-    # check disks [adjust this for PR2100!!]
-    for i in 0 1 2 3 ; do
-        tmp=$(get_disktemp $i)
-        echo "disk $i is $tmp"
-        if [ ! -z $tmp ] && [ "$tmp" -gt 40 ]; then
-            echo "Disk $i temperature is $tmp" 
-            lvl="HOT"
-        fi
-    done
-    
-    #                                                         max-opperating=a   fullfan-minfan=b    b/a= fan percent per degree
-    # check cpu #max 80 #opp 35 1.5% for every degree above 30%      80-35=45         100-30=70     70/45=1.5   
-    for i in $(seq $(get_ncpu)); do
-        tmp=$(get_coretemp $((i-1)))
-        echo "cpu $i is $tmp"
-        if [ "$tmp" -gt 80 ]; then
-            echo "CPU $i temperature is $tmp"
-            lvl="HOT"
-        fi
-        if [ $tmp -gt $cpumaxtmp ]; then
-            cpumaxtmp=$tmp
-        fi
-    done
-
-    echo "CPU max temp is $cpumaxtmp"
-    newtmp=$(($cpumaxtmp-$opptemp))
-    setspeed=$(($newtmp*2+$minfanspeed-5))
-    echo "speed should be: $setspeed%"
-    if [ $setspeed -lt $minfanspeed ]; then
-            setspeed=$minfanspeed
-            echo "Fan speed below minimum, bumping to $minfanspeed%..."
-    fi
- 
-    # check ram
-    for i in 0 1; do
-        tmp=$(get_ramtemp $i)
-        echo "ram$i temp is $tmp"
-        if [ "$tmp" -gt 40 ]; then
-            echo "RAM$i temperature is $tmp"
-            lvl="HOT"
-        fi
-    done 
-
-    echo "Temperature LVL is $lvl"
-    if [ "$lvl" == HOT ] ; then
-        if [ "$fan" != 40 ]; then
-            send FAN=64
-            led FLASH RED
-        fi
-    else
-        send FAN=$setspeed 
-    fi
-}
-
-check_btn_pressed() {
-    btn=$(get_pmc ISR) 
-    #echo "Btn is .$btn."
-    
-    case $btn in
-    20*)
-        echo "Button up pressed!"
-        menu=$(( ($menu + 1) % 3 ))
-        ;;
-    40*) 
-        echo "Button down pressed!"
-        menu=$(( ($menu + 2) % 3 ))
-        ;;
-    *)
-        return    
-    esac
-    
-    case "$menu" in
-    0)
-        show_welcome
-        ;;
-    1)
-        show_ip 0
-        ;;
-    2)
-        show_ip 1
-        ;;
-    # if you add menu items here, update mod 3 uses above    
-    esac        
-}
-
 init() {
-    get_i2c_TTY
+    get_sys_info
     setup_tty
     setup_i2c
 
@@ -305,10 +389,11 @@ init() {
     send VER
     send CFG 
     send STA
-    led SOLID BLU
+    
     show_welcome
+    set_pwr_led SOLID BLU
+    printf "# INIT DONE # \n\n"
 }
-
 
 ###########################################################################
 #############################   MAIN   ####################################
