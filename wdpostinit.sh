@@ -36,6 +36,7 @@ fanSpeedMinimum=35 # Minimum allowed fan speed in percent
 cpuOptimalTemp=35  # Optimal (desired) temp for CPU (commie C degrees not freedom F :()
 cpuMaxTemp=80      # Maximum CPU temp before going full beans
 diskMaxTemp=40     # Maximum DISK temp before going full beans
+pmcMaxTemp=64      # Maximum PMC temp before going full beans
 ramMaxTemp=40      # Maximum RAM temp before going full beans
 updateRate=10      # How often in seconds to update temps
 
@@ -154,8 +155,9 @@ get_pmc() {             # Requires input - Get a value from the PMC ex. inputing
 
 get_disktemp() {        # Requires input - Get the disks temperature only if it is active, else return status
     drivenum=$1  # For some reason i need this and cant put it in later? Makes i2c break somehow...
-    getstatus=$(smartctl -n standby -A $hwHDD"$drivenum"> /dev/null && echo $?) # See if there is and drive exit status
-    if [ $getstatus == 0 ]; then  # If the status of the drive is active, get its temperature
+    smartctl -n standby -A $hwHDD"$drivenum"> /dev/null # Run command to get disk status
+    getstatus=$(echo $?)                                # Get drive exit status
+    if [ "$getstatus" == "0" ]; then  # If the status of the drive is active, get its temperature
         smartctl -n standby -A $hwHDD"$drivenum"| grep Temperature_Celsius | awk '{print $10}'
     else  # If the status of the drive is not active, return the exit status of the drive. Maybe its asleep/standby                
         return $getstatus
@@ -194,25 +196,26 @@ monitor() {             # TODO / Comment
         fi
     fi
     
-    # Check the Temperature of the PMC  
-    tmp=$((0x$(get_pmc TMP)))
-    if [ "$tmp" -gt 64 ]; then
-        echo "WARNING: PMC surpassed maximum (64°C), full throttle activated!"
+    # Check the Temperature of the PMC and convert to hex 
+    tmphex=$(get_pmc TMP)   # I dont need to do this in 2 steps but VSCode complains soooooo..... 2 steps wowww 
+    tmpdec=$((0x$tmphex))   # use tmpdec=$((0x$(get_pmc TMP))) if you want, it works, i just hate the 'error'
+    if [ "$tmpdec" -gt $pmcMaxTemp ]; then
+        echo "WARNING: PMC surpassed maximum ($pmcMaxTemp°C), full throttle activated!"
         hwOverTempAlarm=1 
-        #hwOverTempArray+=("PMC $tmp°C/64°C")
+        #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")
     else
-        echo "PMC -ok"
+        echo "PMC -Ok"
     fi
 
     # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
-    cpuhightmp=0
+    highestcpucoretemp=0
     printf "|------ DISK TEMPS ------\n"
     for i in "${hddarray[@]}" ; do
         tmp=$(get_disktemp $i)
         waserror=$(echo $?)
         if [ $waserror -ne "0" ]; then
             if [ $waserror == 2 ]; then
-                ret=Standby
+                ret=standby
             else
                 ret=Error
             fi
@@ -238,15 +241,15 @@ monitor() {             # TODO / Comment
             #hwOverTempArray+=("CPU$i $tmp°C/$cpuMaxTemp°C")
             hwOverTempAlarm=1
         fi
-        if [ $tmp -gt $cpuhightmp ]; then
-            cpuhightmp=$tmp
+        if [ $tmp -gt $highestcpucoretemp ]; then
+            highestcpucoretemp=$tmp
         fi
     done
     printf "|------------------------\n"
-    echo "Highest CPU core temp is $cpuhightmp °C"
+    #echo "Highest CPU core temp is $highestcpucoretemp °C"
     #                                                       max-opperating=a   fullfan-minfan=b    b/a= fan percent per degree
     #Max-80 Optimal-35 1.5% = for every degree above 30%      80-35=45         100-30=70             70/45=1.5   
-    newtmp=$(("$cpuhightmp"-"$cpuOptimalTemp"))  #MaxTemp 
+    newtmp=$(("$highestcpucoretemp"-"$cpuOptimalTemp"))  #MaxTemp 
     setspeed=$(("$newtmp"*2+"$fanSpeedMinimum"-5))
     
  
