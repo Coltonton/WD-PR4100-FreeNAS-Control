@@ -169,7 +169,7 @@ get_cpucoretemp() {
     if [ $hwSystem == BSD ]; then
         sysctl -n dev.cpu.$1.temperature | cut -d'.' -f1
     elif [ $hwSystem == Linux ]; then
-        echo todo
+        sensors | grep "Core $1" | awk '{print $3}' | cut -d'.' -f1 | cut -b 2-3
     fi
     
 }
@@ -179,7 +179,8 @@ get_ramtemp() {
     if [ $hwSystem == BSD ]; then
         smbmsg -s 0x98 -c 0x0$1 -i 1 -F %d
     elif [ $hwSystem == Linux ]; then
-        echo todo
+        echo "0"
+        # sensors | grep "temp1" | awk '{print $2}' | cut -d'.' -f1 | cut -b 2-3
     fi
 }
 
@@ -204,7 +205,7 @@ monitor() {             # TODO / Comment
         hwOverTempAlarm=1 
         #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")
     else
-        echo "PMC -Ok"
+        pass
     fi
 
     # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
@@ -288,7 +289,7 @@ monitor() {             # TODO / Comment
 show_welcome() {
     # set welcome message
     # maximum  "xxx xxx xxx xxx " 
-    send   "LN1=    FreeNAS     "
+    send   "LN1=    TrueNAS     "
     send   "LN2=    Running     " 
 }
 
