@@ -46,8 +46,7 @@ updateRate=10      # How often in seconds to update temps
 datetime=()     
 hwSystem=Linux                # Used to init kernal variable, gets changed based on kernal in get_sys_info()
 hwTTY=/dev/cuau3              # Used to init tty variable, gets changed based on kernal in get_sys_info()
-hwHDD=/dev/ada
-hddarray=()
+hwHDDArray=()
 hwCPUCoreCount=0
 hwOverTempAlarm=0
 hwOverTempArray=()
@@ -59,11 +58,36 @@ hwOverTempArray=()
 #############################   FUNCS   ###################################
 ###########################################################################
 
-check_for_smartctl(){   # Simple just-to-be-safe check that SMART Mon exists
-    
+check_for_dependencies(){   # Simple just-to-be-safe check that SMART Mon exists
+    depenflag=0
+    # S.M.A.R.T Drive Utilities
     smartctl -v >/dev/null
     if [[ $? != 1 ]]; then
         printf "\n** SMART not installed please run - sudo apt install smartmontools ** \n\n "
+        (( depenflag += 1 ))
+    fi
+
+    # lm-Sensors (For temp sensor data )
+    sensors -v >/dev/null
+    if [[ $? != 0 ]]; then
+        printf "\n** lm-sensors not installed please run - sudo apt install smartmontools ** \n\n "
+        (( depenflag+=2 ))
+    fi
+
+    
+    if [ $depenflag -gt 0 ]; then
+        #printf "Would you like me to install? y/n:"
+        #read resp
+        #if [[ $resp == "y"] && [ $depenflag -gt 0 ]; then
+        #    if [ $depenflag -eq 1 ]; then
+        #        sudo apt install smartmontools
+        #    elif [ $depenflag -eq 2 ]; then
+        #        sudo apt install lm-sensors
+        #    elif [ $depenflag -eq 3 ]; then
+        #        sudo apt install smartmontools && sudo apt install lm-sensors
+        #    fi
+        #fi
+        printf "\n\n## PROGRAM TERMINATED ##\n\n"
         exit
     fi
 }
@@ -77,24 +101,33 @@ get_sys_info(){         # Get system info based off kernal, as BSD/LINUX has not
         MINGW*)  hwSystem=MinGw;;
         *)       hwSystem="Other"
     esac
-    echo $hwSystem
     if [[ ! $hwSystem =~ Linux|BSD ]]; then  # If system is not Linux or *BSD Show unsupported message
-        echo "This software version for the WD PR4100 Hawrdware does not support $hwSystem platform."
+        echo "Sorry, This software version for the WD PR4100 Hawrdware does not support $hwSystem platform."
+        echo "Please create an issue on Github to see about gettin support added"
         exit 1
     fi          
     if [ $hwSystem == BSD ]; then      # If *BSD Free/TrueNAS Core
-        echo '# Detected BSD Kernal #'      # Show what kernal was identified
+        echo '# GETINFO: Detected BSD Kernal #'      # Show what kernal was identified
         hwTTY=/dev/cuau3                    # FreeBSD uses /dev/cuau3 for i2C comms to PR4100 front hardware
-        hwHDD=/dev/ada                      # FreeBSD uses /dev/ada$ for hard drive locations
-        hddarray=('0' '1' '2' '3')          # Drive designation BSD is numerical 0-3 in case of 4 bad PR4100
+        get_int_drives                      # Get location of ONLY internal bay drives
         hwCPUCoreCount=$(sysctl -n hw.ncpu) # Get how many CPU cores
     elif [ $hwSystem == Linux ]; then  # If Linux Free/TrueNAS Scale
-        echo '# Detected Linux Kernal #'    # Show what kernal was identified
+        echo '# GETINFO: Detected Linux Kernal #'    # Show what kernal was identified
         hwTTY=/dev/ttyS2                    # Linux uses much cooler (telatype) /dev/hwTTYS2 for i2C comms to PR4100 front hardware
-        hwHDD=/dev/sd                       # Linux uses /dev/sd$ for hard drive locations
-        hddarray=("a" "b" "c" "d")          # Drive designation Linux is alphabetical a - d in case of 4 bad PR4100
+        get_int_drives                      # Get location of ONLY internal bay drives
         hwCPUCoreCount=$(nproc)             # Get how many CPU cores
     fi
+}
+
+get_int_drives(){       # Gets the location of the internal bay HDD's
+    for file in /dev/disk/by-id/ata*       # With each HDD decice thats ata (Internal Sata)
+    do
+        if [[ $file != *"-part"* ]]; then  # Filter out '-part$' devices as they are the same
+            tmparr+=( $( ls -l "/dev/disk/by-id/ata-${file:20:100}" | awk '{print $11}' | cut -b 7-10 )  )      # oh no
+            readarray -t hwHDDArray < <(for a in "${tmparr[@]}"; do echo "/dev/$a"; done | sort) # Sort
+        fi
+    done
+    echo "# GETINFO: Detected internal bay drives: ${hwHDDArray[@]} #"
 }
 
 setup_tty() {           # Start i2c
@@ -102,7 +135,11 @@ setup_tty() {           # Start i2c
 }
 
 setup_i2c() {           # load kernel modules required for the temperature sensor on the RAM modules
-    kldload -n iicbus smbus smb ichsmb
+    if [ $hwSystem == BSD ]; then
+        kldload -n iicbus smbus smb ichsmb
+    elif [ $hwSystem == Linux ]; then
+        echo "@ERROR: NOT SUPPORTED FIXME"
+    fi
 }
 
 send() {                # Requires input - i2C send function to send commands to front panel
@@ -154,11 +191,11 @@ get_pmc() {             # Requires input - Get a value from the PMC ex. inputing
 }
 
 get_disktemp() {        # Requires input - Get the disks temperature only if it is active, else return status
-    drivenum=$1  # For some reason i need this and cant put it in later? Makes i2c break somehow...
-    smartctl -n standby -A $hwHDD"$drivenum"> /dev/null # Run command to get disk status
-    getstatus=$(echo $?)                                # Get drive exit status
+    drivesel=$1 #$1  # For some reason i need this and cant put it in later? Makes i2c break somehow...
+    smartctl -n standby -A $drivesel > /dev/null # Run command to get disk status
+    getstatus=$(echo $?)                                 # Get drive exit status
     if [ "$getstatus" == "0" ]; then  # If the status of the drive is active, get its temperature
-        smartctl -n standby -A $hwHDD"$drivenum"| grep Temperature_Celsius | awk '{print $10}'
+        smartctl -n standby -A $drivesel | grep Temperature_Celsius | awk '{print $10}'
     else  # If the status of the drive is not active, return the exit status of the drive. Maybe its asleep/standby                
         return $getstatus
     fi
@@ -205,13 +242,13 @@ monitor() {             # TODO / Comment
         hwOverTempAlarm=1 
         #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")
     else
-        pass
+        echo "@ERROR: NOT SUPPORTED FIXME"
     fi
 
     # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
     highestcpucoretemp=0
     printf "|------ DISK TEMPS ------\n"
-    for i in "${hddarray[@]}" ; do
+    for i in "${hwHDDArray[@]}" ; do
         tmp=$(get_disktemp $i)
         waserror=$(echo $?)
         if [ $waserror -ne "0" ]; then
@@ -220,9 +257,9 @@ monitor() {             # TODO / Comment
             else
                 ret=Error
             fi
-            echo "| $hwHDD$i is in $ret status"
+            echo "| Drive ${i:5:5} is in $ret status"
         else
-            echo "| $hwHDD$i is $tmp°C"
+            echo "| Drive ${i:5:15} is $tmp °C"
             if [ ! -z $tmp ] && [ $tmp -gt $diskMaxTemp ]; then
                 echo "| WARNING: CPU Core$i surpassed maximum ($diskMaxTemp°C), full throttle activated!" 
                 hwOverTempAlarm=1
@@ -379,11 +416,12 @@ set_pwr_led(){
 }
 
 init() {
+    check_for_dependencies
     get_sys_info
     setup_tty
     setup_i2c
 
-    echo "Getting system status and firmware!"
+    echo "# GETINFO: Getting system status and firmware! *"
     send VER
     send CFG 
     send STA
