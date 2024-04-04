@@ -73,7 +73,6 @@ check_for_dependencies(){   # Simple just-to-be-safe check that SMART Mon exists
         printf "\n** lm-sensors not installed please run - sudo apt install smartmontools ** \n\n "
         (( depenflag+=2 ))
     fi
-
     
     if [ $depenflag -gt 0 ]; then
         #printf "Would you like me to install? y/n:"
@@ -123,7 +122,7 @@ get_int_drives(){       # Gets the location of the internal bay HDD's
     for file in /dev/disk/by-id/ata*       # With each HDD decice thats ata (Internal Sata)
     do
         if [[ $file != *"-part"* ]]; then  # Filter out '-part$' devices as they are the same
-            tmparr+=( $( ls -l "/dev/disk/by-id/ata-${file:20:100}" | awk '{print $11}' | cut -b 7-10 )  )      # oh no
+            tmparr+=( $( ls -l "/dev/disk/by-id/ata-${file:20:100}" | awk '{print $11}' | cut -b 7-10 )  ) # Get the /dev location
             readarray -t hwHDDArray < <(for a in "${tmparr[@]}"; do echo "/dev/$a"; done | sort) # Sort
         fi
     done
@@ -137,8 +136,6 @@ setup_tty() {           # Start i2c
 setup_i2c() {           # load kernel modules required for the temperature sensor on the RAM modules
     if [ $hwSystem == BSD ]; then
         kldload -n iicbus smbus smb ichsmb
-    elif [ $hwSystem == Linux ]; then
-        echo "@ERROR: NOT SUPPORTED FIXME"
     fi
 }
 
@@ -207,8 +204,7 @@ get_cpucoretemp() {
         sysctl -n dev.cpu.$1.temperature | cut -d'.' -f1
     elif [ $hwSystem == Linux ]; then
         sensors | grep "Core $1" | awk '{print $3}' | cut -d'.' -f1 | cut -b 2-3
-    fi
-    
+    fi  
 }
 
 get_ramtemp() {
@@ -240,9 +236,7 @@ monitor() {             # TODO / Comment
     if [ "$tmpdec" -gt $pmcMaxTemp ]; then
         echo "WARNING: PMC surpassed maximum ($pmcMaxTemp°C), full throttle activated!"
         hwOverTempAlarm=1 
-        #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")
-    else
-        echo "@ERROR: NOT SUPPORTED FIXME"
+        #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")"
     fi
 
     # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
@@ -289,37 +283,42 @@ monitor() {             # TODO / Comment
     #Max-80 Optimal-35 1.5% = for every degree above 30%      80-35=45         100-30=70             70/45=1.5   
     newtmp=$(("$highestcpucoretemp"-"$cpuOptimalTemp"))  #MaxTemp 
     setspeed=$(("$newtmp"*2+"$fanSpeedMinimum"-5))
-    
  
     # Check the installed RAM Temperature
     printf "|------ RAM TEMPS -------\n"
-    for i in 0 1; do
-        tmp=$(get_ramtemp $i)
-        echo "| ram$i temp is $tmp °C"
-        if [ "$tmp" -gt $ramMaxTemp ]; then
-        #if [ "$tmp" -gt 0 ]; then
-            echo "| WARNING: RAM$i surpassed maximum ($ramMaxTemp°C), full throttle activated!"
-            #hwOverTempArray+=("RAM $tmp°C/$ramMaxTemp°C")
-            hwOverTempAlarm=1
-        fi
-    done 
+    if [ $hwSystem == BSD ]; then      # If *BSD Free/TrueNAS Core
+        for i in 0 1; do
+            tmp=$(get_ramtemp $i)
+            echo "| ram$i temp is $tmp °C"
+            if [ "$tmp" -gt $ramMaxTemp ]; then
+            #if [ "$tmp" -gt 0 ]; then
+                echo "| WARNING: RAM$i surpassed maximum ($ramMaxTemp°C), full throttle activated!"
+                #hwOverTempArray+=("RAM $tmp°C/$ramMaxTemp°C")
+                hwOverTempAlarm=1
+            fi
+        done 
+    else 
+        echo "|"
+        echo "| Currently Unsupported"
+        echo "|"
+    fi
+    printf "|------------------------\n"
 
     if [ ${#hwOverTempArray[@]} -gt 0 ] || [ $hwOverTempAlarm == 1 ]; then
         echo " WARNING: SYSTEM OVER LIMIT TEMPERATURE(s) FAN SET TO 100% "
         hwOverTempAlarm=1               # Flag System Over Temp-ed
-        #hwLastOverTemp=$(get_datetime)  # Save the time when the system over temped
+        #hwLastOverTemp=$(get_datetime) # Save the time when the system over temped
         send FAN=64                     # Full Beans Fan 100%
         set_pwr_led FLASH RED           # Flash Power LED RED to warn
-        #write_logdata
-        
+        #write_logdata                  # OOOOO am I leaking future stuff?! 
     else
         if [ $setspeed -lt $fanSpeedMinimum ]; then
-            echo "Computed fan speed below minimum allowed, bumping to $fanSpeedMinimum%..."
-            setspeed=$fanSpeedMinimum
+            echo "Calculated fan speed below minimum allowed, bumping to $fanSpeedMinimum%..."
+            setspeed=$fanSpeedMinimum  # Set the fan to the min allowed
         else
             echo "Setting fan speed to: $setspeed%"
+            send FAN=$setspeed         # Set fan to mathed speed if not overtemped
         fi
-        send FAN=$setspeed              # Set fan to mathed speed if not overtemped
     fi
 }
 
