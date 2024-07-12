@@ -6,7 +6,7 @@ export WDHardwareScriptOnline
 #export -p
 
 #env -i
-#./wdpostinit.sh 
+./wdpostinit.sh 
 
 
 #while true; do

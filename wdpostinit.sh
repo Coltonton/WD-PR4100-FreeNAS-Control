@@ -9,6 +9,10 @@
 #    - I'm back working on this!
 #    - Decided to skip finishing 1.1 and am just going to 1.2 to have more fun
 #    - Code being rebassed with functions moved to librarys
+#    - Update the temp profile adding the ability for the ram/disk temps to also set the fan speed not just the cpu temp
+#    - Show the PCM Temp
+#    - Updated the Send command to better allow debug print and returning properly (still needs some work)
+#    - hopefully cleaned up send command to not go banannas
 #  
 # BSD 3 LICENSE (inherited from TFL)
 # Thanks unix stackexchange question 231975 & github user @stefaang
@@ -37,14 +41,22 @@ source support/pageSupport.sh
 ###########################################################################
 #########################   DO NOT TOUCH   ################################
 ###########################################################################
-declare -A hwSaftey=(   [fanSpeedMinimum]=35  # Minimum allowed fan speed expressed as percent
+
+# Hardware characteristics tuned off a stock WDPR4100 with 4x WD Red Pro 18TB's. Running no VMs or Services just 2x SMB shares a IDLE.  
+# This default profile optimizes for fan at 50% (pretty quiet with stock fan) while idleing
+# Of course the device can run cooler, however that means more fan. Ideally fan value should not fluctuate much at idle
+declare -A hwSaftey=(   [fanSpeedMinimum]=35  # Minimum allowed fan speed in HEX expressed as percent 0xXX
                         [cpuOptimalTemp]=35   # Optimal (desired) temp for CPU (commie C degrees not freedom F :()
                         [cpuMaxTemp]=80       # Maximum CPU temp before going full beans
-                        [diskMaxTemp]=40      # Maximum DISK temp before going full beans
+                        [diskOptimalTemp]=35  # My disks tend to spin at idle at 35
+                        [diskMaxTemp]=45      # Maximum DISK temp before going full beans
+                        [diskDangerTemp]=60   # Absolute limit (minus saftey factor) before disk damage (65 for WD Red Pro) 
                         [pmcMaxTemp]=64       # Maximum PMC temp before going full beans
                         [ramMaxTemp]=40       # Maximum RAM temp before going full beans
                         [updateRate]=10       # How often in seconds to update hardware stats    
-                        [hwOverTempAlarm]=0  # Alarm for when a piece of hardware is over temp.
+                        [hwOverTempAlarm]=0   # Alarm for when a piece of hardware is over temp.
+                        
+
 )
 
 ###########################################################################
@@ -159,7 +171,7 @@ get_datetime() {        # Duh.... Sorry lol, easy time/date vars cuz cleaner
 }
 
 get_pmc() {             # Requires input - Get a value from the PMC ex. inputing RPM gets fan0's rpm
-    send $1 | cut -d'=' -f2
+    send $1 1 | cut -d'=' -f2
 }
 
 get_disktemp() {        # Requires input - Get the disks temperature only if it is active, else return status
@@ -191,30 +203,39 @@ get_ramtemp() {         # Requires input - Get the memory (ram) temperature from
 }
 
 updateHW() {             # Main Function - Does all the hardware updating.
-    # check RPM (fan may get stuck) and convert hex to dec
+    hottestCoreTemp=0
+    hottestDiskTemp=0
+    hottestRamTemp=0
+    clear -x
+    prevFanHex=$requestFan
+  # check RPM (fan may get stuck) and convert hex to dec
     #readfanpercent=$(get_pmc FAN)
-    rpmhex=$(get_pmc RPM)
+    rpmOutput=$(get_pmc "RPM")
+    rpmhex=${rpmOutput: -4}
     rpmdec=$((0x$rpmhex))
-    #clear
-    echo "FAN 0 RPM: $rpmdec"
-    if [ "$rpmdec" != ERR ]; then
+    echo "FAN0 RPM is: $rpmdec"    
+    if [ "$rpmhex" == "ERR" ]; then   # NEED TO ADD ERROR BACK
         if [ "$rpmdec" -lt 400 ]; then
-            echo "FAN 0 RPM WARNING: low RPM - $rpmdec - clean dust!"
-            set_pwr_led FLASH RED
+            echo "ERROR FAN0 RPM: low RPM - $rpmdec - clean dust!"
+        else
+            echo "ERROR FAN0: Generic"
         fi
+        hwSaftey[hwOverTempAlarm]=1  # Cause a over temperature Alarm
     fi
     
-    # Check the Temperature of the PMC and convert to hex 
-    tmphex=$(get_pmc TMP)   # I dont need to do this in 2 steps but VSCode complains soooooo..... 2 steps wowww 
-    tmpdec=$((0x$tmphex))   # use tmpdec=$((0x$(get_pmc TMP))) if you want, it works, i just hate the 'error'
-    if [ "$tmpdec" -gt ${hwSaftey[pmcMaxTemp]} ]; then
+  # Check the Temperature of the PMC and convert to hex 
+    pcmOutput=$(get_pmc TMP)   # I dont need to do this in 2 steps but VSCode complains soooooo..... 2 steps wowww 
+    pcmhex=${pcmOutput: -2}
+    pcmdec=$((0x$pcmhex))   # use tmpdec=$((0x$(get_pmc TMP))) if you want, it works, i just hate the 'error'
+    echo "PCM is: $pcmdec °C" 
+    if [ "$pcmdec" -gt ${hwSaftey[pmcMaxTemp]} ]; then
         echo "WARNING: PMC surpassed maximum (${hwSaftey[pmcMaxTemp]}°C), full throttle activated!"
         hwSaftey[hwOverTempAlarm]=1 
         #hwOverTempArray+=("PMC $tmp°C/$pmcMaxTemp°C")"
     fi
 
-    # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
-    highestcpucoretemp=0
+  # Check the Hard Drive Temperature [adjust this for PR2100!!] (<- IDK what that means)
+    
     printf "|------ DISK TEMPS ------\n"
     for i in "${hwBayHD[@]}" ; do
         tmp=$(get_disktemp $i)
@@ -231,69 +252,117 @@ updateHW() {             # Main Function - Does all the hardware updating.
             if [ ! -z $tmp ] && [ $tmp -gt ${hwSaftey[diskMaxTemp]} ]; then
                 echo "| WARNING: CPU Core$i surpassed maximum (${hwSaftey[diskMaxTemp]}°C), full throttle activated!" 
                 hwSaftey[hwOverTempAlarm]=1
-                #hwOverTempArray+=("HDD$i $tmp°C/$hddMaxTemp°C")
+                hwOverTempArray+=("HDD$i $tmp°C/$hddMaxTemp°C")
             fi
+        fi
+        if [ $tmp -gt $hottestDiskTemp ]; then
+            hottestDiskTemp=$tmp
         fi  
     done
+    echo "| Hottest disk is $hottestDiskTemp °C"
     printf "|------------------------\n"
     
-
-    # Check the Temperature of the CPU
+  # Check the Temperature of the CPU
     printf "|---- CPU CORE TEMPS ----\n"
     for i in $(seq ${sysInfo[hwCPUCoreCount]}); do
         tmp=$(get_cpucoretemp $((i-1)))
         echo "| cpu core$i is $tmp °C"
         if [ $tmp -gt ${hwSaftey[cpuMaxTemp]} ]; then
             echo "| WARNING: CPU Core$i surpassed maximum (${hwSaftey[cpuMaxTemp]}°C), full throttle activated!"
-            #hwOverTempArray+=("CPU$i $tmp°C/$cpuMaxTemp°C")
+            hwOverTempArray+=("CPU$i $tmp°C/$cpuMaxTemp°C")
             hwSaftey[hwOverTempAlarm]=1
         fi
-        if [ $tmp -gt $highestcpucoretemp ]; then
-            highestcpucoretemp=$tmp
+        if [ $tmp -gt $hottestCoreTemp ]; then
+            hottestCoreTemp=$tmp
         fi
     done
+    echo "| Hottest core is $hottestCoreTemp °C"
     printf "|------------------------\n"
-    #echo "Highest CPU core temp is $highestcpucoretemp °C"
-    #                                                       max-opperating=a   fullfan-minfan=b    b/a= fan percent per degree
-    #Max-80 Optimal-35 1.5% = for every degree above 30%      80-35=45         100-30=70             70/45=1.5   
-    newtmp=$(("$highestcpucoretemp"-"${hwSaftey[cpuOptimalTemp]}"))  #MaxTemp 
-    setspeed=$(("$newtmp"*2+"${hwSaftey[fanSpeedMinimum]}"-5))
  
-    # Check the installed RAM Temperature
+  # Check the installed RAM Temperature
     printf "|------ RAM TEMPS -------\n"
     if [ ${sysInfo[hwSystem]} == BSD ]; then      # If *BSD Free/TrueNAS Core
         for i in 0 1; do
             tmp=$(get_ramtemp $i)
             echo "| ram$i temp is $tmp °C"
             if [ "$tmp" -gt ${hwSaftey[ramMaxTemp]} ]; then
-            #if [ "$tmp" -gt 0 ]; then
                 echo "| WARNING: RAM$i surpassed maximum (${hwSaftey[ramMaxTemp]}°C), full throttle activated!"
-                #hwOverTempArray+=("RAM $tmp°C/$ramMaxTemp°C")
+                hwOverTempArray+=("RAM $tmp°C/$ramMaxTemp°C")
                 hwSaftey[hwOverTempAlarm]=1
             fi
+            if [ $tmp -gt $hottestRamTemp ]; then
+                hottestRamTemp=$tmp
+            fi
         done 
-    else 
-        echo "|"
-        echo "| Currently Unsupported"
-        echo "|"
+    elif [ ${sysInfo[hwSystem]} == Linux ]; then  # If *Linux TrueNAS Scale 
+        echo "|  Unsupported (Scale)"
+        hottestRamTemp=0
     fi
     printf "|------------------------\n"
 
-    if [ ${#hwOverTempArray[@]} -gt 0 ] || [ ${hwSaftey[hwOverTempAlarm]} -eq 1 ]; then
-        echo " WARNING: SYSTEM OVER LIMIT TEMPERATURE(s) FAN SET TO 100% "
-        echo "${#hwOverTempArray[@]}"
-        hwSaftey[hwOverTempAlarm]=1               # Flag System Over Temp-ed
+  # Get Desired Fans per each device (DISK, RAM, CPU)
+    requestFan=0
+
+    # The way the cooling profile works is liniar - basicly what we are doing here is taking the diffrence between
+    # The full fan % and the minimum fan % to get (A) then we take the diffrence between the Max allowed temp
+    # and the optimal temp to get (B) and finillay Dividing B by A. This gives us a value that represents how
+    # many fan percent points each degree of the device represents.  
+    # Basiclly   xMultiplier=((100 - fanSpeedMinimum) / (xMaxTemp - xOptimalTemp)) 
+    # Or for core using the default values    coreMultiplier=((100 - 53) / (80 - 35)) == coreMultiplier=( 47 / 45 ) == coreMultiplier=1 (as there are no decimals)
+    coreMultiplier="$(( ( 100 - $((0x${hwSaftey[fanSpeedMinimum]})) ) / ( ${hwSaftey[cpuMaxTemp]} - ${hwSaftey[cpuOptimalTemp]} ) ))" 
+    diskMultiplier="$(( ( 100 - $((0x${hwSaftey[fanSpeedMinimum]})) ) / ( ${hwSaftey[diskMaxTemp]} - ${hwSaftey[diskOptimalTemp]} ) ))"
+
+    #CPU CORE FAN REQUEST
+    coreDiffTemp=$(("$hottestCoreTemp"-"${hwSaftey[cpuOptimalTemp]}"))                  # The temp of the hottest core minus the optimal temp to get how much hotter from the minimum
+    requestFanCore=$(("$coreDiffTemp"*$coreMultiplier+"${hwSaftey[fanSpeedMinimum]}"))  # The diff times(*) the multiplier and add(+) the minimum fan speed
+    requestFan=$requestFanCore                                                          # Set the gotten value to the requestFan Var
+    echo "| Core request fan speed $((0x$requestFanCore))% [0x$requestFanCore]"
+    
+    # DISK FAN REQUEST
+    diskDiffTemp=$(("$hottestDiskTemp"-"${hwSaftey[diskOptimalTemp]}"))                 # The temp of the hottest disk minus the optimal temp to get how much hotter from the minimum
+    requestFanDisk=$(("$diskDiffTemp"*$diskMultiplier+"${hwSaftey[fanSpeedMinimum]}"))  # The diff times(*) the multiplier and add(+) the minimum fan speed
+    if [ $requestFanDisk -gt $requestFan ]; then                                        # If this number is > requestFanCore Set the gotten value to the request Fan Var                          
+        requestFan=$requestFanDisk
+    fi
+    echo "| Disks request fan speed $requestFanDisk% [0x$requestFanDisk]"
+
+    # RAM FAN REQUEST
+    # Activate only on TrueNas Core
+    if [ ${sysInfo[hwSystem]} == BSD ]; then    
+        ramDiffTemp=$(("$hottestRamTemp"-"${hwSaftey[cpuOptimalTemp]}"))  # The temp of the hottest disk minus the optimal temp to get how much hotter from the minimum
+        requestFanRam=$(("$ramDiffTemp"*2+"$fanspeedmindec"-5))           # The diff times(*) the multiplier and add(+) the minimum fan speed
+        if [ $requestFanRam -gt $requestFan ]; then                       # If this number is > requestFanCore && requestFanDisk Set the gotten value to the request Fan Var                          
+            requestFan=$requestFanRam
+        fi
+        echo "| Ram request fan speed $((0x$requestFanRam))% [0x$requestFanRam]"
+    # If TrueNAS Scale, this function is not supportd so do nothing
+    else
+        echo "| Ram can not request fan speed"
+        requestFanRam=0
+    fi
+    printf "|------------------------\n"
+
+  # Got all values, time to set Fan%
+    
+    if [ ${hwSaftey[hwOverTempAlarm]} -eq 1 ]; then  
+    # If there is an active OverTemp Alarm 
+        echo " WARNING: SYSTEM OVER LIMIT TEMPERATURE(s) FAN SET TO 100% [0x64]"
+        echo "${#hwOverTempArray[@]}"   # Display the devices that are in an alarm state
         #hwLastOverTemp=$(get_datetime) # Save the time when the system over temped
-        send FAN=64                     # Full Beans Fan 100%
+        send FAN=64                     # Full Beans Fan 100% (0x64)
         set_pwr_led FLASH RED           # Flash Power LED RED to warn
         #write_logdata                  # OOOOO am I leaking future stuff?! 
-    else
-        if [ $setspeed -lt ${hwSaftey[fanSpeedMinimum]} ]; then
-            echo "Calculated fan speed below minimum allowed, bumping to ${hwSaftey[fanSpeedMinimum]}%..."
-            setspeed=${hwSaftey[fanSpeedMinimum]}  # Set the fan to the min allowed
-        else
-            echo "Setting fan speed to: $setspeed%"
-            send FAN=$setspeed         # Set fan to mathed speed if not overtemped
+    
+    else 
+    # There is no over temp condion
+        #tempvar=$((0x$requestFanDisk))
+        if [ $requestFan -lt ${hwSaftey[fanSpeedMinimum]} ]; then # If the desired fan speed is bellow minimum
+            echo "Calculated fan speed below minimum allowed ($((0x$requestFan))%) [0x$requestFan], forcing $((0x${hwSaftey[fanSpeedMinimum]}))% [0x${hwSaftey[fanSpeedMinimum]}]..."
+            requestFan=${hwSaftey[fanSpeedMinimum]}      # Set the fan to the min allowed
+            send FAN=$requestFan                         # Set fan to mathed speed if not overtemped
+        elif [ "$requestFan" != "$setspeedpre" ]; then # If the desired fan % changed from lasttime
+            echo "Setting fan speed to: $((0x$requestFan))% [0x$requestFan] | Previous: $((0x$prevFanHex))% [0x$prevFanHex]"
+            send FAN=$requestFan                         # Set fan to mathed speed if not overtemped
         fi
     fi
 }
@@ -332,28 +401,22 @@ check_btn_pressed() {
 }
 
 preload(){
-    set_pwr_led FLASH YLW                     # Set the Power LED to flash yellow as visual indicator
+    set_pwr_led PULSE BLU                     # Set the Power LED to flash yellow as visual indicator
     setDisplay "wdhardware.sh" "Starting..."  # Set front panel LCD Line 1 and 2
 }
 
 init() {
+    clear -x
     get_sys_info
     preload
-
-    #echo ${sysInfo[hwOverTempAlarm]}
-    ##sysInfo[hwSystem]="CHANGEDD"
-    #echo ${sysInfo[hwSystem]}
-
-    #echo $WDHardwareScriptOnline
-    #WDHardwareScriptOnline=1
-    #echo $WDHardwareScriptOnline
-
-    ##exit
+    sleep 2
 
     check_for_dependencies
     setup_i2c
     StartWDHW
     
+    echo "Loading wdhws..."
+    sleep 2
     setDisplay "TrueNAS" "Running"
     set_pwr_led SOLID BLU
     printf "# INIT DONE # \n\n"
@@ -362,6 +425,7 @@ init() {
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
+
 init
 
 while true; do
@@ -370,7 +434,7 @@ while true; do
     #echo $WDHardwareScriptOnline
     #WDHardwareScriptOnline=1
     updateHW
-    echo "Next temp update in ${hwSaftey[updateRate]} seconds"
+    echo -n "${hwSaftey[updateRate]} seconds until next hardware refresh"
 
 
     # check for button presses
