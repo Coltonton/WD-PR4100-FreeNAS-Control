@@ -11,6 +11,7 @@
 # BSD 3 LICENSE (inherited from TFL)
 # Thanks unix stackexchange question 231975 & github user @stefaang
 
+
 ############### COMMAND LIST ###############
 # THING          COMMAND       USE
 # FAN            FAN=64        Enter Hex value 01-64 (1-100%) Use at your own risk, only you can prevent forest fires
@@ -29,10 +30,13 @@
 #10-blue/off 11-blue/blue 12-blue/red 13-blue/purple 14-blue/green 15-blue/teal 16-blue/yellow 17-blue/White
 #18-purple/off 19-purple/blue 1A-purple/red 1B-purple/purple 1C-purple/green 1D-purple/teal 1E-purple/yellow 1F-purple/White
 
+
+source support/hwSupport.sh
 ###########################################################################
 #############################   VARS   ####################################
 ###########################################################################
 tty=/dev/ttyS2  # Used to init variable
+getVer='Linux'
 
 
 ###########################################################################
@@ -61,7 +65,10 @@ setup_tty() {
 
 setup_i2c() {
     # load kernel modules required for the temperature sensor on the RAM modules
-    kldload -n iicbus smbus smb ichsmb
+    if [$getVer == "FreeBSD"]
+    then
+        kldload -n iicbus smbus smb ichsmb
+    fi
 }
 
 send() {
@@ -95,13 +102,6 @@ send_empty() {
     # send a empty command to clear the output
     echo -ne "\r" >&5
     read ignore <&4
-}
-
-show_msg() {
-    # set welcome message
-    # maximum  "xxx xxx xxx xxx " (16 chars) 
-    send   "LN1=    TrueNAS     "
-    send   "LN2=Shutting Down..-" 
 }
 
 led(){
@@ -160,5 +160,5 @@ setup_tty       # Setup TTY
 setup_i2c       # Settup i2C
 
 send FAN=64     # Set fan 100% to be safe
-led FLASH YLW   # Set the Power LED to flash yellow as visual indicator
-show_msg        # Set the LCD Display Text 
+set_pwr_led FLASH YLW   # Set the Power LED to flash yellow as visual indicator
+setDisplay "TrueNAS" "Shutting Down..." # Set the LCD Display Text 

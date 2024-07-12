@@ -1,3 +1,9 @@
+Version 1.2 (XX-XX-2024)
+========================
+* I'm back working on this!
+* Decided to skip finishing 1.1 and am just going to 1.2 to have more fun
+* Code being rebassed with functions moved to librarys
+
 Version 1.1 (03-26-2024)
 ========================
 * Added Support for Linux based TrueNAS Scale along side TrueNAS Core for PR4100 as per the request and help of @SuperDope & @nestandi

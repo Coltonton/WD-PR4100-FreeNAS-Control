@@ -2,11 +2,9 @@
 
 ![Drag Racing](https://m.media-amazon.com/images/I/8127BVaefIL.jpg)
 
-Version 1.1 (03-26-2024)
+Version 1.2 (XX-XX-20XX)
 ========================
-* Added Support for Linux based TrueNAS Scale along side TrueNAS Core for PR4100 as per the request and help of @SuperDope & @nestandi
-* Fixed Some Typos/Cleaned up while here
-* More Comments = More Better
+* IN PROGRESS (abandoning 1.1)
 
 # WD PR4100 FreeNAS Hardware Control
  Hardware control for the WD PR4100 running [@stefaang's](https://github.com/stefaang) Freenas found [HERE](https://community.wd.com/t/firmware-freenas-on-pr4100-updated/218730). All work is based off his basic hardware control script found [here](https://gist.github.com/stefaang/0a23a25460f65086cbec0db526e87b03). I've simply made it better/more functional 
