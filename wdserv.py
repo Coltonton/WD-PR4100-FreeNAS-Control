@@ -16,6 +16,8 @@ lstvalue=""
 Alert="0"
 
 MailToSend=False
+BackendStatus=""
+Handshake=False
 
 dbgn = "none"
 dbgi = "info"
@@ -46,12 +48,30 @@ def dprint(pnt="", lvl=dbgn, tme=True, eod=False):   #Debug printing   pass in d
     if eod == True:
         print("⸸\n")
 
+def backendHealthCheck():
+    global BackendStatus
+    file1 = open("daemon.txt", "r")
+    f = file1.readlines()
+    file1.close()
+
+    Status = str(f[0]).rstrip('\n')
+
+    if Status == "OFFLINE":
+            BackendStatus="OFFLINE"
+            time.sleep(1)
+
+            return BackendStatus
+    else:
+        BackendStatus="ONLINE"
+        time.sleep(1)
+        return BackendStatus
+
 def checkForIncomingMail():
     global lstupdatetime, Alert
     try:
         file1 = open("daemon.txt", "r")
         f = file1.readlines()
-        f2 = str(f[0]).rstrip('\n')
+        Status = str(f[1]).rstrip('\n')
         file1.close()
         checklstupdatetime=str(f2)
         #print('Time was loaded [' + str(f2) + "]")
@@ -60,15 +80,21 @@ def checkForIncomingMail():
         checklstupdatetime=""
         #print('Time WAS NOT loaded correctly')
 
+    print(f)
+    if str(f[0]).rstrip('\n') == "OFFLINE":
+        print("WARNING BACKEND SERVER WENT/IS OFFLINE")
+        quit()
+
     if checklstupdatetime != lstupdatetime and checklstupdatetime:
         lstupdatetime = checklstupdatetime
-        print("#################\ndata updated at [" + str(checklstupdatetime) + "], fetching...")
+        print("\n#################\ndata updated at [" + str(checklstupdatetime) + "], fetching...")
         try:
             file1 = open("daemon.txt", "r")
             f = file1.readlines() 
-            vTime= str(f[0]).rstrip('\n')
-            Hex = str(f[1]).rstrip('\n')    # RRRRLLTT BBLLKPDP  RPM,Level,temp,  Backlight,LED,Blink,Pulse,Drives,PSU
-            Alert = str(f[2]).rstrip('\n')
+            Status = str(f[0]).rstrip('\n')
+            vTime  = str(f[1]).rstrip('\n')
+            Hex    = str(f[2]).rstrip('\n')    # RRRRLLTT BBLLKPDP  RPM,Level,temp,  Backlight,LED,Blink,Pulse,Drives,PSU
+            Alert  = str(f[3]).rstrip('\n')
             file1.close()
             lstvalue = str(Hex)
             print('# Following data was loaded: \n  [' + str(Hex) + "]\n  " + str(Alert) + "\n")
@@ -77,116 +103,87 @@ def checkForIncomingMail():
             #print('Data WAS NOT loaded')
         
 
-        if Alert != "0":
+        if Alert == "1":
             print("## BUTTON PUSHED! " + str(Alert) + "\n\n\n")
 
-def sendOutgoingMail(led=False, lcd1=False, lcd2=False):
+        
+
+def Send(snd):   
     with open('daemonin.txt', 'r') as file:
         data = file.readlines()
     file.close
 
-    if led != False:
-        ledsta=""
-        backlight=led[0:2]
-        ledstate=led[2:4]
-        ledblk=led[5:]
-        ledpulse=led[-1:]
-        time.sleep(1)
-        
-        ledsta=(str(backlight) + str(ledstate) + str(ledblk) + str(ledpulse))
+    data = "ONLINE\nCMD\n" + snd
 
-        data[0] = (str(ledsta) + "\n")
-    else:
-        data[0] =""
-
-
-    if lcd1 != False:
-        data[1] = (str(lcd1) + "\n")
-    else:
-        data[1] ="\n"
-    if lcd2 != False:
-        data[2] = (str(lcd2) + "\n")
-    else:
-        data[2] ="\n"
-
-    data[3] = "O"
-
+    print("Sending: " + snd)
     with open('daemonin.txt', 'w') as file:
         file.writelines( data )
     file.close
 
+    i=0
     while True:
-        time.sleep(2)
+        
+        time.sleep(1)
         with open('daemonin.txt', 'r') as file:
             data = file.readlines()
         file.close
 
-        if data[3].rstrip('\r\n') == "ACK":
-            data[3] = ("X\n")
+        if data[1].rstrip('\r\n') == "ACK":
+            datav = "ONLINE\nCMD\n\n"
             with open('daemonin.txt', 'w') as file:
-                file.writelines( data )
+                file.writelines( datav )
             file.close
+            print("ACK\n")
             return True
         else: 
-            return False
+            i = i + 1
+            if i > 5:
+                print("Server Did not respond in 5 seconds...\n")
+                checkForIncomingMail()
+                #return False
 
-    
+        
+def servOffline():
+    data = "OFFLINE\n\n\n"
+    #print(data)
 
-###########################################################################
-#############################  DUMMY  #####################################
-###########################################################################
-def dummyLoad():
-  
-    send("RPM")
-    getResponce()
-    #print(getResponce())
-    time.sleep(1)
-    send("RPM")
-    getResponce()
-    #print(getResponce())
-    time.sleep(1)
-    send("RPM")
-    getResponce()
-    #print(getResponce())
-    time.sleep(1)
-    send("BLK=00")
-    #getResponce()
-    #print(getResponce())
-    #time.sleep(1)
-    send("LED=1B")         #40- 01000000     #50- 01010000
-    getResponce()
-    #print(getResponce())
-    time.sleep(1)
-
-def dummyLoad2():
-    time.sleep(1)
-
+    with open('daemonin.txt', 'w') as file:
+        file.writelines( data )
+    file.close
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
-time.sleep(1)
+def execute_app():
+    time.sleep(1)
+    count = 0
+    print("Program Status: [ONLINE]")
+    while True:
+        count = count + 1 
+        backend=backendHealthCheck()
+        if count > 60:
+            print("Backend server failed to come online after 60 seconds... exiting...")
+            quit()
 
-vled="320200"
-vlcd1="Test"
-vlcd2="Transmission"
-MailToSend=True
+        if backend == "ONLINE":
+            print("Backend Server Status: [ONLINE] - Took [" + str(count) + "] Seconds")
+            Handshake = Send("LED=04")
+            print(Handshake)
+            while True:
+                Handshake = Send("LED=04")
+                time.sleep(5)
+                checkForIncomingMail()
+                #Send("LED=03")
+                #time.sleep(5)
+            
+def main():
+    try:
+        execute_app()
+    finally:
+        servOffline()
 
-while True:
-    #dummyLoad2()
 
-    checkForIncomingMail()
-    if MailToSend ==True:
-        did=sendOutgoingMail(vled, vlcd1, vlcd2)
-        if did == True:
-            MailToSend=False
-            print("It Did Do")
-        else:
-            print("Failed")
-    
-    
-
-    
-SerialObj.close()          # Close the port
+if __name__=='__main__':
+    main()
 
 
 

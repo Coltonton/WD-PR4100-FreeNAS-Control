@@ -24,7 +24,8 @@ lastsent2="00000000"
 alert=False
 AlertByte="0"
 laststa="0"
-
+ProgramHealth=""
+backendState="Offline"
 
 
 
@@ -33,6 +34,8 @@ dbgi = "info"
 dbgd = "debug"
 dbga = "all"
 debugPrint="none"
+
+
 
 
 ###########################################################################
@@ -59,6 +62,7 @@ def dprint(pnt="", lvl=dbgn, tme=True, eod=False):   #Debug printing   pass in d
             print("⸸\n")
 
 def getInit():
+    print("get init")
     send("VER")
     print(getResponce())
     send("CFG")
@@ -71,7 +75,7 @@ def getInit():
     print(getResponce())
     send("FAN=64")
     print(getResponce())
-
+    
 def send(var):
     write_place  = (var).encode()
     SerialObj.write(write_place + terminator)
@@ -79,11 +83,12 @@ def send(var):
 def sendEmpty():
     #print("Sending Empty...")
     SerialObj.write(terminator)
+    ans = SerialObj.readline().decode().strip()
+    SerialObj.flushInput()
     
 def getResponce():
-    
     ans = SerialObj.readline().decode().strip()
-    #SerialObj.flushInput()
+    SerialObj.flushInput()
     #sprint("ans is:")
     #print(ans)
     if ans == "ALERT":
@@ -342,7 +347,6 @@ def pullDataByte1():    # Get Fan RPM, Speed, and PCM Temp -                    
     dprint("", dbgd, tme=False, eod=True)         # End Debug print
 
     #print(type(thermhex))
-    #print(thermhex)
     return thermhex
 
 def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level -             Returns 8 byte value 0x BBLLKPXX ex. b'641b0000
@@ -429,44 +433,176 @@ def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level 
 
 
 def getIncomingMail():
+    global ProgramHealth
+    time.sleep(5)
+    with open('daemonin.txt', 'r') as filein:
+        datain = filein.readlines()
+    filein.close
+    #print(datain)
+
+    if datain[0].rstrip('\r\n') == "ONLINE" and ProgramHealth != "ONLINE":
+        print("PROGRAM STATUS: [ONLINE]")
+        programOnline()
+        ProgramHealth="ONLINE"
+
+    if datain[0].rstrip('\r\n') == "OFFLINE" and ProgramHealth != "OFFLINE":
+        print("PROGRAM STATUS: [OFFLINE]")
+        programOffline()
+        ProgramHealth="OFFLINE"
+
+    if datain[1].rstrip('\r\n') == "CMD":
+        while True:
+            #datain[2]="VER"
+            if datain[2] == "\n":
+                #sendEmpty()
+                break
+            send(datain[2])
+            resp = getResponce()
+            print("\n" + resp + ": " + datain[2] + "\n")
+
+            #datain = (str(datain[0]) +"\n" + str(resp) + "\n" +str(datain[0]) + "\n")
+            #print(datain)
+            datain[1] = "ACK\n"
+
+            with open('daemonin.txt', 'w') as file:
+                file.writelines( datain )
+            file.close
+
+            SerialObj.flushInput()
+
+            if resp == "ACK":
+                break
+
+def programHealthCheck(datain=[]):
+    global ProgramHealth
+    #if datain == []:
     with open('daemonin.txt', 'r') as filein:
         datain = filein.readlines()
     filein.close
 
-    if datain[3].rstrip('\r\n') == "O":
-        print("getincomingmail")
-        leddatain=datain[0]
-        send("BKL=" + str(leddatain[0:2]))
-        bklack = str(getResponce()) # Get Responce
-        send("LED=" + str(leddatain[2:4]))
-        ledack = str(getResponce()) # Get Responce
-        send("BLK=" + str(leddatain[4:5]))
-        plsack = str(getResponce()) # Get Responce
-        send("PLS=" + str(leddatain[5:].rstrip('\n')))
-        plsack = str(getResponce()) # Get Responce
-        #print(("uhh    " + " bl" + str(backlight) + " s" + str(ledstate) + " b" + str(ledblk) + " p" + str(ledpulse)))
+    if datain[0].rstrip('\r\n') == "ONLINE" and ProgramHealth != "ONLINE":
+        print("PROGRAM STATUS: [ONLINE]")
+        programOnline()
+        ProgramHealth="ONLINE"
 
-        #time.sleep(1)
-        send("LN1=" + str(datain[1].rstrip('\n')))
-        ln1ack = str(getResponce()) # Get Responce
-        #time.sleep(1)
-        send("LN2=" + str(datain[2].rstrip('\n')))
-        ln2ack = str(getResponce()) # Get Responce
-
-        datain[3] = ("ACK\n")
-        with open('daemonin.txt', 'w') as file:
-            file.writelines( datain )
-        file.close
-
-        SerialObj.flushInput()
-        print("returning from get mail")
+    if datain[0].rstrip('\r\n') == "OFFLINE" and ProgramHealth != "OFFLINE":
+        print("PROGRAM STATUS: [OFFLINE]")
+        ProgramHealth="OFFLINE"
+    
 
 def checkdriveRemoved():
     pass
 #ISR=10 = Drive Removed/Added
 #
 
+def bkndServOnline(starting=False):
+    time.sleep(1)
+    send("BKL=64")
+    send("LED=06")
+    if starting==False:
+        time.sleep(1)
+        send("BLK=00")
+        time.sleep(1)
+        send("LN1= Server Online")
+        time.sleep(.5)
+        send("LN2=Program ????????")
+        time.sleep(.5)
+        send("FAN=32")
+        time.sleep(1)
 
+        with open('daemon.txt', 'r') as file1:
+            data = file1.readlines()
+        file1.close
+                    
+        data[0] = "ONLINE\n"
+        data[1] = str(clock.now().strftime("%m/%d %I:%M.%S\n"))
+        data[2] = "\n" 
+        data[3] = "\n"
+                    
+        with open('daemon.txt', 'w') as file1:
+            file1.writelines( data )
+        file1.close
+        
+        print("Backend Server Status: [UP]")
+
+
+    else:
+        time.sleep(.1)
+        send("BLK=06")
+        time.sleep(.1)
+        send("LN1= Server Starting")
+        time.sleep(.1)
+        send("LN2=Program ##########")
+        send("FAN=64")
+        print("Backend Server Status: [STARTING]")
+
+def bkndServOffline():
+    time.sleep(1)
+    send("BKL=64")
+    time.sleep(.1)
+    send("PLS=00")
+    time.sleep(.5)
+    send("LED=02")
+    time.sleep(.5)
+    #send("BLK=01") led = 03
+    send("BLK=02")
+    time.sleep(.5)
+    send("FAN=64")
+    time.sleep(.1)
+    send("LN1= Server Offline")
+    time.sleep(.1)
+    send("LN2=Program ????????")
+
+
+    with open('daemon.txt', 'r') as file1:
+        data = file1.readlines()
+    file1.close
+
+    data[0] = "OFFLINE\n"
+                
+    with open('daemon.txt', 'w') as file1:
+        file1.writelines( data )
+    file1.close
+    
+def servOnline(starting=False):
+    time.sleep(1)
+    send("BKL=64")
+    send("LED=01")
+    time.sleep(1)
+    send("BLK=00")
+    time.sleep(1)
+    send("LN1= Server Online")
+    time.sleep(.1)
+    send("LN2= Waiting 4 Prog")
+    time.sleep(1)
+    print("Main Server Status: [UP]")
+
+def programOnline():
+    time.sleep(1)
+    send("LN1= Server Online")
+    time.sleep(.1)
+    send("LN2=Program Online")
+    time.sleep(.1)
+    send("BLK=00")
+    time.sleep(.1)
+    send("LED=04")
+    time.sleep(.1)
+    send("PLS=04")
+    time.sleep(1)
+    #sendEmpty()
+
+def programOffline():
+    time.sleep(.5)
+    send("LN1= Server Online")
+    res=getResponce()
+    time.sleep(.1)
+    send("LN2=Program Offline")
+    time.sleep(.1)
+    send("LED=06")
+    res=getResponce()
+    time.sleep(.1)
+    send("BLK=06")
+    res=getResponce()
 ###########################################################################
 #############################  DUMMY  #####################################
 ###########################################################################
@@ -484,64 +620,117 @@ def allprintoutput(lte, the, hdw):
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
-time.sleep(1)
-sendEmpty()
-getInit()
+def execute_app():
+    global alert
+    global AlertByte
+    global laststa
+    global lastsent1
+    global lastsent2
+    global ProgramHealth
+    WaitingOnProgram = False
 
-while True:
-    byte1=pullDataByte1()
-    byte2=pullDataByte2()
-
-    getIncomingMail()
-    #ledSend=getIncomingMail()[0]
-    #Lcd1Send=getIncomingMail()[1]
-    #Lcd2Send=getIncomingMail()[2]
-    #AlertByte=laststa
-
+    bkndServOnline(True)
     time.sleep(1)
+    sendEmpty()
+    getInit()
+    bkndServOnline()
+    time.sleep(1)
+    sendEmpty()
+    programHealthCheck()
 
-    if alert == True:
-        #print("uh alert?")
-        AlertByte=laststa
-        print(AlertByte)
-        alert=False 
+    while True:
+        #print(ProgramHealth)
+        if ProgramHealth == "ONLINE":
+            WaitingOnProgram = False
+            byte1=pullDataByte1()
+            byte2=pullDataByte2()
+            #print(byte1)
+            #print(byte2)
 
-    if (str(byte1) != str(lastsent1)) or (str(byte2) != str(lastsent2)) or AlertByte != "0":
-        #print(byte1)
-        tmpvar=int(byte1[6:])
-        #print(str(tmpvar) + "vs" + str(lastsent1[6:] ) )
-        lowval = int(lastsent1[6:]) - 2
-        hihval = int(lastsent1[6:]) + 2
-        if (int(tmpvar) >= hihval) or (int(tmpvar) <= lowval) or AlertByte != "0":# or (int(tmpvar) <= (int(lastsent1[6:]) - 2)):
-            lastsent1 = str(byte1)
-            lastsent2 = str(byte2)
-            #allprintoutput(LightsHex, ThermalsHex, HwConnectHex)
-            #print("Writing to file")
+            getIncomingMail()
+            #ledSend=getIncomingMail()[0]
+            #Lcd1Send=getIncomingMail()[1]
+            #Lcd2Send=getIncomingMail()[2]
+            #AlertByte=laststa
 
-            with open('daemon.txt', 'r') as file1:
-                data = file1.readlines()
-            file1.close
-            
-            data[0] = str(clock.now().strftime("%m/%d %I:%M.%S\n"))
-            data[1] = (str(byte1) + str(byte2) + "\n")
-            data[2] = str(AlertByte) + "\n"
-            
+            time.sleep(1)
 
-            with open('daemon.txt', 'w') as file1:
-                file1.writelines( data )
-            file1.close
+            if alert == True:
+                #print("uh alert?")
+                AlertByte=laststa
+                print(AlertByte)
+                alert=False 
 
-            AlertByte = "0"
+            if (str(byte1) != str(lastsent1)) or (str(byte2) != str(lastsent2)) or AlertByte != "0":
+                try:
+                    #print(byte1)
+                    tmpvar=int(byte1[6:])
+                    #print(str(tmpvar) + "vs" + str(lastsent1[6:] ) )
+                    lowval = int(lastsent1[6:]) - 2
+                    hihval = int(lastsent1[6:]) + 2
+                    if (int(tmpvar) >= hihval) or (int(tmpvar) <= lowval) or AlertByte != "0":# or (int(tmpvar) <= (int(lastsent1[6:]) - 2)):
+                        lastsent1 = str(byte1)
+                        lastsent2 = str(byte2)
+                        #allprintoutput(LightsHex, ThermalsHex, HwConnectHex)
+                        #print("Writing to file")
 
-            #file1 = open("daemon.txt", "w")
-            #file1.seek(0)
+                        with open('daemon.txt', 'r') as file1:
+                            data = file1.readlines()
+                        file1.close
+                        
+                        data[0] = "ONLINE\n"
+                        data[1] = str(clock.now().strftime("%m/%d %I:%M.%S\n"))
+                        data[2] = (str(byte1) + str(byte2) + "\n")
+                        data[3] = str(AlertByte) + "\n"
+                        
 
-            #file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(byte1) + str(byte2) + "\n" )
-            print(data)
- 
+                        with open('daemon.txt', 'w') as file1:
+                            file1.writelines( data )
+                        file1.close
 
+                        AlertByte = "0"
+
+                        #file1 = open("daemon.txt", "w")
+                        #file1.seek(0)
+
+                        #file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(byte1) + str(byte2) + "\n" )
+                        print(data)
+                except:
+                    print("error")
+
+
+                
+        else:
+            if (WaitingOnProgram == False ):
+                programOffline()
+                print("Waiting For Program To Come Online...")
+                WaitingOnProgram = True
+                
+            programHealthCheck()
+            if ProgramHealth == "ONLINE":
+                send("FAN")
+                var=getResponce()
+                print(var)
+                #var=getResponce()
+            time.sleep(5)       
+
+def main():
+    try:
+        execute_app()
+    finally:
+        bkndServOffline()
+
+if __name__=='__main__':
+    main()
+
+
+# EXAMPLE OUTPUT
+# 10/08 11:26.29
+# 03de3223640600C2
+# 0
+# ONLINE
     
-SerialObj.close()          # Close the port
+
 
 
 
