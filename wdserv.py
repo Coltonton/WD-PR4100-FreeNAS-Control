@@ -1,6 +1,7 @@
 #### /mnt/pool/py/bin/python3 /home/admin/wddhw/wdserv.py
 import time
 from datetime import datetime as clock
+import socket
 
 
 
@@ -178,14 +179,14 @@ def decodeData(data2decode):    # This function takes out data and converts it i
     WDLEDPULSE=data2decode[13:14]
     WDDRiVE=data2decode[14:16]      
 
-    print("RPM: " + WDRPM)
+    '''print("RPM: " + WDRPM)
     print("FAN: " + WDRPM)
     print("TEMP: " + WDTEMP)
     print("BACKLIGHT: " + WDBACKLIGHT)
     print("LED: " + WDLED)
     print("LED BLK: " + WDBLINK)
     print("LED PLS: " + WDLEDPULSE)
-    print("UNASSIGNED: " + WDDRiVE)
+    print("UNASSIGNED: " + WDDRiVE)'''
 
 def getButton(which):
     global WDALERT
@@ -294,11 +295,10 @@ def tutPage():
                 sp = sp - 1
             cn=True
         elif pushed == "HO" and sp == 8:
-            Send(["LED=01","LN1=    TrueNAS","LN2=--F --F 83F 95F"])
+            Send(["LED=01"])
             break
 
         if cn==True:
-            print(sp)
             if sp == 1:
                 Send(["LED=00","BLK=01","LN1=OS Booting","LN2=Please wait..."])
             elif sp == 2:
@@ -318,7 +318,26 @@ def tutPage():
 
     print("tut done")
 
-        
+def welcomePage():
+    Send(["LN1=   Welcome To", "LN2=  WD Hardware!", "LED=01"])
+
+def mainPage():
+    hostname=socket.gethostname()
+    print(hostname)
+    Send(["LED=01", "LN1=   TrueNAS @   ", ("LN2=" + hostname)])
+
+def drivePage():
+    Send(["LN1=OK   OK  OK   OK", "LN2=--F --F  --F --F"])
+
+def ipPage():
+    pass
+
+def sysPage():
+    pass
+
+
+def settingsPage():
+    pass
 
     
 
@@ -350,11 +369,11 @@ def execute_app():       # Main Execution Function
         if backendState == "ONLINE":
             print("Took [" + str(count) + "] Seconds To Do So.")
             count=0
-            Handshake = Send(["LN1=   Welcome To", "LN2=    TrueNAS!", "LED=01"]) # The Two programs take a few seconds to allign themselves, once this command goes through. We are set.
+            Handshake = welcomePage() # The Two programs take a few seconds to allign themselves, once this command goes through. We are set.
 
             # Main Loop
-            Send(["LN1=    TrueNAS","LN2=--F --F --F --F"])
             tutPage()
+            mainPage()
             while True:
                 if backendState == "OFFLINE": break
                 checkForIncomingMail()
