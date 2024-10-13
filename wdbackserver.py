@@ -3,6 +3,7 @@
 import serial
 import time
 from datetime import datetime as clock
+import json
 
 
 
@@ -19,13 +20,15 @@ upPushed = False
 usbPushed = False
 downPushed = False
 
-lastsent1="00000000"
-lastsent2="00000000"
+LastSavedDataByte1="00000000"
+LastSavedDataByte2="00000000"
 alert=False
 AlertByte="0"
 laststa="0"
 ProgramHealth=""
 backendState="Offline"
+
+
 
 
 
@@ -124,7 +127,7 @@ def getISR():
     global usbPushed
     global downPushed
     btn=""
-    outdata=""
+    outdata="0"
     SerialObj.flushInput()
     #print("writing isr")
     SerialObj.write(b'ISR\r')
@@ -320,38 +323,49 @@ def checkHWConnections():  # Get PSU Online status, drivebays loaded, Speed, and
 def pullDataByte1():    # Get Fan RPM, Speed, and PCM Temp -                                Returns 8 byte value 0x RRRRLLTT ex. b'06AE6418
     tochecklist = ["RPM", "FAN", "TMP"]                                                     #                       \\//\/\/
     dlist       = ["Called checkThermals()", "\n‡ "]                                        #                        \/  \ \___ PCM Temp[T]  (°C)
-    thermhex    = ""                                                                        #         Fan RPM[R] ____/    \____ Fan Level[L] (%)   
+    makedatabyte1    = ""                                                                   #         Fan RPM[R] ____/    \____ Fan Level[L] (%)  
+    isrbyte     = 0 
     dprint("", dbgd, tme=True)
-    tmpvar=""
-    tmpvar2=""
     global laststa
 
+    #Get Value for each DataSource (RPM,FAN,TEMP(TMP))
     for x in tochecklist:
         send(x)                           # Ask For State
+        #print(x)
         tmpvar = str(getResponce())#[4:])  # Get Responce
         if tmpvar == "ALERT":
+            print("ALERT1")
             #send("STA")
             #laststa=getResponce()
             #print(laststa)
             send(x)
             tmpvar2=getResponce()[4:]
             #print(tmpvar2)
+        elif tmpvar[0:3] == "ISR":
+            if int(tmpvar[4:]) > 0:
+                isrbyte=int(tmpvar[4:])
+                print("GOT AN ISR OF [" + str(isrbyte) + "] in DataByte1")
+            else:
+                isrbyte=0
+            send(x)
+            tmpvar = str(getResponce())#[4:])  # Get Responce
+            tmpvar2 = tmpvar[4:]
         else:
             tmpvar2 = tmpvar[4:]
-        thermhex += tmpvar2              # Add it to our 8 Byte Value
+        makedatabyte1 += tmpvar2              # Add it to our 8 Byte Value
         dlist = dlist + [ x , "[", tmpvar, "]" +"\n‡ "] # Add for debug output
     
     #DebugPrint Statment
     dprint(dlist, dbgd, tme=False, eod=False)     # Print the debug info
-    dprint(thermhex, dbgd, tme=False, eod=False)  # Print the full 8 byte value
+    dprint(makedatabyte1, dbgd, tme=False, eod=False)  # Print the full 8 byte value
     dprint("", dbgd, tme=False, eod=True)         # End Debug print
 
-    #print(type(thermhex))
-    return thermhex
+    #print(type(makedatabyte1))
+    return makedatabyte1#,isrbyte
 
 def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level -             Returns 8 byte value 0x BBLLKPXX ex. b'641b0000
     tochecklist = ["BKL", "LED", "BLK", "PLS"]                                                #                       \/\/||\/
-    dlist       = ["Called pullDataByte2() Part[Lights]", "\n‡ "]                                            # BackLight Level[B] ___/ / |\ \___ Unassigned[X]
+    dlist       = ["Called pullDataByte2() Part[Lights]", "\n‡ "]                             # BackLight Level[B] ___/ / |\ \___ Unassigned[X]
     lighthex    = ""                                                                          #       Led State[L] ____/  | \____ Led Pulse[P]
     dprint("", dbgd, tme=True)                                                                #                      Led Blink[K]
 
@@ -359,6 +373,7 @@ def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level 
         send(x)                           # Ask For State
         tempvar = str(getResponce())#[4:])  # Get Responce
         if tempvar == "ALERT":
+            print("ALERT2")
             send(x)                           # Ask For State
             tempvar = str(getResponce())[4:]  # Get Responce
         else:
@@ -376,7 +391,7 @@ def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level 
     dprint(lighthex, dbgd, tme=False, eod=False)  # Print the full 8 byte value
     dprint("", dbgd, tme=False, eod=True)         # End Debug print
 
-    dlist2       = ["Called pullDataByte2() Part[HW]", "\n‡ "]                                   #                       ||\\\///
+    dlist2       = ["Called pullDataByte2() Part[HW]", "\n‡ "]                              #                       ||\\\///
     psu=0                                                                                   #  Occupied Bays[B] ___/ | \\//
     bay=0                                                                                   #     PSU Status[P] ____/   \/
     dprint("", dbgd, tme=True)                                                              #     Unassigned[X] ________/ 
@@ -434,11 +449,8 @@ def pullDataByte2():      # Get LED State,Blinking,Pulsing  and Backlight Level 
 
 def getIncomingMail():
     global ProgramHealth
-    time.sleep(5)
-    with open('daemonin.txt', 'r') as filein:
-        datain = filein.readlines()
+    with open('daemonin.txt', 'r') as filein: datain = filein.readlines()
     filein.close
-    #print(datain)
 
     if datain[0].rstrip('\r\n') == "ONLINE" and ProgramHealth != "ONLINE":
         print("PROGRAM STATUS: [ONLINE]")
@@ -450,28 +462,35 @@ def getIncomingMail():
         programOffline()
         ProgramHealth="OFFLINE"
 
-    if datain[1].rstrip('\r\n') == "CMD":
-        while True:
-            #datain[2]="VER"
-            if datain[2] == "\n":
-                #sendEmpty()
-                break
-            send(datain[2])
-            resp = getResponce()
-            print("\n" + resp + ": " + datain[2] + "\n")
+    if datain[1].rstrip('\r\n') == "CMD" or datain[1].rstrip('\r\n') == "LST":
+        sendlst=[]
+        issuccess=[]
 
-            #datain = (str(datain[0]) +"\n" + str(resp) + "\n" +str(datain[0]) + "\n")
-            #print(datain)
-            datain[1] = "ACK\n"
+        if datain[1].rstrip('\r\n') == "CMD":
+            sendlst.append(datain[2].rstrip('\r\n'))
+        elif datain[1].rstrip('\r\n') == "LST":
+            sendlsttxt=datain[2].rstrip('\r\n')
+            sendlsttxt = sendlsttxt.replace("'", '"')
+            sendlst = json.loads(sendlsttxt)
 
-            with open('daemonin.txt', 'w') as file:
-                file.writelines( datain )
-            file.close
+        for item in sendlst:
+            while True:
+                if datain[2] == "\n":
+                    break
+                send(item)
+                resp = getResponce()
+                print("\n" + resp + ": " + item)
+                if resp == "ACK":
+                    issuccess.append("ACK")
+                    break
 
-            SerialObj.flushInput()
+        datain[1] = ("ACK\n")
+        with open('daemonin.txt', 'w') as fileout: fileout.writelines( datain )
+        fileout.close
 
-            if resp == "ACK":
-                break
+        SerialObj.flushInput()
+
+        
 
 def programHealthCheck(datain=[]):
     global ProgramHealth
@@ -482,6 +501,7 @@ def programHealthCheck(datain=[]):
 
     if datain[0].rstrip('\r\n') == "ONLINE" and ProgramHealth != "ONLINE":
         print("PROGRAM STATUS: [ONLINE]")
+        print("Please wait for handshake to complete...\n")
         programOnline()
         ProgramHealth="ONLINE"
 
@@ -585,10 +605,10 @@ def programOnline():
     time.sleep(.1)
     send("BLK=00")
     time.sleep(.1)
-    send("LED=04")
-    time.sleep(.1)
-    send("PLS=04")
-    time.sleep(1)
+    #send("LED=04")
+    #time.sleep(.1)
+    #send("PLS=04")
+    #time.sleep(1)
     #sendEmpty()
 
 def programOffline():
@@ -624,8 +644,8 @@ def execute_app():
     global alert
     global AlertByte
     global laststa
-    global lastsent1
-    global lastsent2
+    global LastSavedDataByte1
+    global LastSavedDataByte2
     global ProgramHealth
     WaitingOnProgram = False
 
@@ -638,80 +658,79 @@ def execute_app():
     sendEmpty()
     programHealthCheck()
 
+    # MAIN LOOP
     while True:
-        #print(ProgramHealth)
+        # If the main source program is ONLINE     
         if ProgramHealth == "ONLINE":
             WaitingOnProgram = False
-            byte1=pullDataByte1()
-            byte2=pullDataByte2()
-            #print(byte1)
-            #print(byte2)
-
+            returnedDataByte1=pullDataByte1()
+            returnedDataByte2=pullDataByte2()
+            AlertByte=str(getISR())
             getIncomingMail()
             #ledSend=getIncomingMail()[0]
             #Lcd1Send=getIncomingMail()[1]
             #Lcd2Send=getIncomingMail()[2]
-            #AlertByte=laststa
-
             time.sleep(1)
 
-            if alert == True:
-                #print("uh alert?")
-                AlertByte=laststa
-                print(AlertByte)
-                alert=False 
+            # If an ALERT condition arises
+            #if alert == True:
+                #print(laststa)
+                #AlertByte=laststa
+                #alert=False
+                #pass 
 
-            if (str(byte1) != str(lastsent1)) or (str(byte2) != str(lastsent2)) or AlertByte != "0":
+            #Check if Values differ from saved or ALERT
+            if (str(returnedDataByte1) != str(LastSavedDataByte1)) or (str(returnedDataByte2) != str(LastSavedDataByte2)) or str(AlertByte) != "0": 
+                # Verify/Try And see if databyte1 returned a valid response 
                 try:
-                    #print(byte1)
-                    tmpvar=int(byte1[6:])
-                    #print(str(tmpvar) + "vs" + str(lastsent1[6:] ) )
-                    lowval = int(lastsent1[6:]) - 2
-                    hihval = int(lastsent1[6:]) + 2
-                    if (int(tmpvar) >= hihval) or (int(tmpvar) <= lowval) or AlertByte != "0":# or (int(tmpvar) <= (int(lastsent1[6:]) - 2)):
-                        lastsent1 = str(byte1)
-                        lastsent2 = str(byte2)
-                        #allprintoutput(LightsHex, ThermalsHex, HwConnectHex)
-                        #print("Writing to file")
+                    tempvar=int(returnedDataByte1[6:])
+                # If ValueError (most likely) Say the Responce was invalid and try again
+                except ValueError: 
+                    dbgmsg="DataByte1 Provided an invalid response [" + returnedDataByte1 + "]"
+                    dprint(dbgmsg, dbgd, tme=True, eod=True)
+                # Some Other Exception Occured
+                except:  
+                    dbgmsg="DataByte1 Provided an invalid response [" + returnedDataByte1 + "]"
+                    dprint("DataByte1  - UnknownException", dbgd, tme=True, eod=True)
+                # Everything looks A-OK go ahead and process
+                else:    
+                    lowval = int(LastSavedDataByte1[6:]) - 2  # Privious temp minus 2
+                    hihval = int(LastSavedDataByte1[6:]) + 2  # Privious temp plus 2
+                    #print(LastSavedDataByte1, lowval, hihval, AlertByte)
+                    #print(str(tempvar) + "vs" + str(LastSavedDataByte1[6:] ) )
 
-                        with open('daemon.txt', 'r') as file1:
-                            data = file1.readlines()
-                        file1.close
+                    # We only check if temp has changed by +/- 2 degrees as RPM and Fan level are not really crucial to update on OR there is an alert
+                    if (int(tempvar) >= hihval) or (int(tempvar) <= lowval) or str(AlertByte) != "0":
+                        LastSavedDataByte1 = str(returnedDataByte1) # Save the new DataByte1 value to the register
+                        LastSavedDataByte2 = str(returnedDataByte2) # Save the new DataByte2 value to the register
+
+                        # Read the Output file
+                        with open('daemon.txt', 'r') as f: filedata = f.readlines()
+                        f.close
                         
-                        data[0] = "ONLINE\n"
-                        data[1] = str(clock.now().strftime("%m/%d %I:%M.%S\n"))
-                        data[2] = (str(byte1) + str(byte2) + "\n")
-                        data[3] = str(AlertByte) + "\n"
-                        
+                        # Create the data for the output file 
+                        filedata[0] = "ONLINE\n"                                      # Backend Health Status
+                        filedata[1] = str(clock.now().strftime("%m/%d %I:%M.%S\n"))   # Last Update Time
+                        filedata[2] = (str(returnedDataByte1) + str(returnedDataByte2) + "\n") # Data Output
+                        filedata[3] = str(AlertByte) + "\n"                           # Alert Output
+                            
 
-                        with open('daemon.txt', 'w') as file1:
-                            file1.writelines( data )
-                        file1.close
+                        print(filedata)
+                        # Write the new data to the output file
+                        with open('daemon.txt', 'w') as f: f.writelines( filedata )
+                        f.close
+                        AlertByte = "0"   #Clear AlertByte
 
-                        AlertByte = "0"
-
-                        #file1 = open("daemon.txt", "w")
-                        #file1.seek(0)
-
-                        #file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(byte1) + str(byte2) + "\n" )
-                        print(data)
-                except:
-                    print("error")
-
-
-                
+        # If the main source program is OFFLINE          
         else:
+            # If this is the first loop when the main source program is OFFLINE show the "program offfline" message and set WaitingOnProgram
             if (WaitingOnProgram == False ):
                 programOffline()
                 print("Waiting For Program To Come Online...")
                 WaitingOnProgram = True
                 
+            #update the status of the main source program and wait 5 seconds
             programHealthCheck()
-            if ProgramHealth == "ONLINE":
-                send("FAN")
-                var=getResponce()
-                print(var)
-                #var=getResponce()
             time.sleep(5)       
 
 def main():
@@ -725,11 +744,33 @@ if __name__=='__main__':
 
 
 # EXAMPLE OUTPUT
-# 10/08 11:26.29
+# ONLINE             <-BackendServerStatus
+# 10/08 11:26.29     <-Last Update Time
+# 03de3223640600C2   <-Data Output (see note)
+# 0                  <-Alert Output
+
+
+#NOTE: Data Output 
 # 03de3223640600C2
-# 0
-# ONLINE
-    
+# |______||______|
+#    ||      ||
+#    ||  databyte2
+# databyte1
+
+
+#NOTE: Databyte1
+''' ex 03de 32  23
+        ||  ||  ||
+       RPM  FAN Temp '''
+
+#NOTE: Databyte2
+'''
+
+'''
+
+
+
+
 
 
 
@@ -738,8 +779,8 @@ if __name__=='__main__':
 
 #    filein = open("daemonin.txt", "w")
     #    filein.seek(0)
-    #    file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(lastsent1) + str(lastsent2) + "\n" + str(AlertByte) )
-    #    print(str(lastsent1) + "\n" + str(byte2) + "\n" + str(AlertByte) + "\n" )
+    #    file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(LastSavedDataByte1) + str(LastSavedDataByte2) + "\n" + str(AlertByte) )
+    #    print(str(LastSavedDataByte1) + "\n" + str(byte2) + "\n" + str(AlertByte) + "\n" )
     #    file1.close
     #    alert=False
 
@@ -747,7 +788,7 @@ if __name__=='__main__':
     #    print("uh alert?")
     #    file1 = open("daemon.txt", "w")
     #    file1.seek(0)
-    #    file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(lastsent1) + str(lastsent2) + "\n" + str(AlertByte) )
-    #    print(str(lastsent1) + "\n" + str(byte2) + "\n" + str(AlertByte) + "\n" )
+    #    file1.write(str(clock.now().strftime("%m/%d %I:%M.%S\n")) + str(LastSavedDataByte1) + str(LastSavedDataByte2) + "\n" + str(AlertByte) )
+    #    print(str(LastSavedDataByte1) + "\n" + str(byte2) + "\n" + str(AlertByte) + "\n" )
     #    file1.close
     #    alert=False

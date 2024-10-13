@@ -16,7 +16,8 @@ lstvalue=""
 Alert="0"
 
 MailToSend=False
-BackendStatus=""
+ProgramHealth=""
+backendState="OFFLINE"
 Handshake=False
 
 dbgn = "none"
@@ -24,7 +25,26 @@ dbgi = "info"
 dbgd = "debug"
 dbga = "all"
 debugPrint="all"
+btnD="BTTN_DOWN"
+btnU="BTTN_UP"
+btnH="BTTN_USB"
 
+
+WDRPM=""
+WDFAN=""
+WDTEMP=""
+WDBACKLIGHT=""
+WDLED=""
+WDBLINK=""
+WDLEDPULSE=""
+WDDRiVE=""
+WDALERT=""
+
+userBacklightTimeout=5
+userBacklightDIM=25
+userBacklightBRIGHT=100
+userLedColor="04"
+userLedPulseOnInactive=True
 
 ###########################################################################
 #############################   FUNCS   ###################################
@@ -48,42 +68,42 @@ def dprint(pnt="", lvl=dbgn, tme=True, eod=False):   #Debug printing   pass in d
     if eod == True:
         print("⸸\n")
 
-def backendHealthCheck():
-    global BackendStatus
-    file1 = open("daemon.txt", "r")
-    f = file1.readlines()
-    file1.close()
+def backendHealthCheck():       #Function to read the status of the backend server daemon
+    global backendState
 
-    Status = str(f[0]).rstrip('\n')
+    # Read the Daemon File
+    with open('daemon.txt', 'r') as filein: datain = filein.readlines()
+    filein.close()
 
+    # Get Daemon status and do what must be done.
+    Status = str(datain[0]).rstrip('\n')
     if Status == "OFFLINE":
-            BackendStatus="OFFLINE"
-            time.sleep(1)
-
-            return BackendStatus
-    else:
-        BackendStatus="ONLINE"
+        backendState="OFFLINE"
         time.sleep(1)
-        return BackendStatus
+        return backendState
+    elif Status == "ONLINE":
+        backendState="ONLINE"
+        time.sleep(1)
+        return backendState
+    else:
+        return "Error"
 
 def checkForIncomingMail():
-    global lstupdatetime, Alert
-    try:
-        file1 = open("daemon.txt", "r")
-        f = file1.readlines()
-        Status = str(f[1]).rstrip('\n')
-        file1.close()
+    global lstupdatetime, WDALERT
+    try:   # See if timestamp is there
+        with open('daemon.txt', 'r') as filein: datain = filein.readlines()
+        filein.close
+        f2 = str(datain[1]).rstrip('\n')
         checklstupdatetime=str(f2)
-        #print('Time was loaded [' + str(f2) + "]")
-    except:
+    except: # Timestamp finding had an error
         f2=""
         checklstupdatetime=""
-        #print('Time WAS NOT loaded correctly')
 
-    print(f)
-    if str(f[0]).rstrip('\n') == "OFFLINE":
-        print("WARNING BACKEND SERVER WENT/IS OFFLINE")
-        quit()
+    # If reading the file results in the backend server being OFFLINE
+    if str(datain[0]).rstrip('\n') == "OFFLINE":
+        print("WARNING BACKEND SERVER WENT/IS OFFLINE, Terminating...")
+        backendState="OFFLINE"
+        return
 
     if checklstupdatetime != lstupdatetime and checklstupdatetime:
         lstupdatetime = checklstupdatetime
@@ -94,93 +114,261 @@ def checkForIncomingMail():
             Status = str(f[0]).rstrip('\n')
             vTime  = str(f[1]).rstrip('\n')
             Hex    = str(f[2]).rstrip('\n')    # RRRRLLTT BBLLKPDP  RPM,Level,temp,  Backlight,LED,Blink,Pulse,Drives,PSU
-            Alert  = str(f[3]).rstrip('\n')
+            WDALERT  = str(f[3]).rstrip('\n')
             file1.close()
             lstvalue = str(Hex)
-            print('# Following data was loaded: \n  [' + str(Hex) + "]\n  " + str(Alert) + "\n")
+            print('#[' + str(Hex) + "]\n  " + str(Alert) + "\n")
+
+            #return Status, vTime, Hex, Alert
+            decodeData(Hex)
         except:
             f1=""
-            #print('Data WAS NOT loaded')
         
-
         if Alert == "1":
             print("## BUTTON PUSHED! " + str(Alert) + "\n\n\n")
 
-        
+def Send(datatosend):           # Call this function to send data to the backend server daemon which then sends the WD faceplate. Pass in a STR ot List   
+    # Read the file
+    with open('daemonin.txt', 'r') as filein: data = filein.readlines()
+    filein.close
 
-def Send(snd):   
-    with open('daemonin.txt', 'r') as file:
-        data = file.readlines()
-    file.close
+    # If the user provides a list
+    if type(datatosend) == list:
+        senddata = "ONLINE\nLST\n" + str(datatosend)
+        print("Sending List: " + str(datatosend))
+    else: # If the user provides a string
+        senddata = "ONLINE\nCMD\n" + datatosend
+        print("Sending: " + str(datatosend))
 
-    data = "ONLINE\nCMD\n" + snd
-
-    print("Sending: " + snd)
-    with open('daemonin.txt', 'w') as file:
-        file.writelines( data )
-    file.close
+    # Write the data to the file
+    with open('daemonin.txt', 'w') as f: f.writelines( senddata )
+    f.close
 
     i=0
     while True:
-        
+        # Wait and read the backend server daemon file
         time.sleep(1)
-        with open('daemonin.txt', 'r') as file:
-            data = file.readlines()
-        file.close
+        with open('daemonin.txt', 'r') as f: data = f.readlines()
+        f.close
 
+        # Check the backend server daemon responded with an ACK (acknowledge)
         if data[1].rstrip('\r\n') == "ACK":
-            datav = "ONLINE\nCMD\n\n"
-            with open('daemonin.txt', 'w') as file:
-                file.writelines( datav )
-            file.close
+            i=0
+            datav = "ONLINE\nXXX\n"  # Clear the command identifier
+            with open('daemonin.txt', 'w') as fileout: fileout.writelines( datav ) # Write the cleared command identifier
+            fileout.close
             print("ACK\n")
             return True
-        else: 
+        else: # If not get an acknowledgement count here 5 times (seconds) then return False if command failed
             i = i + 1
             if i > 5:
                 print("Server Did not respond in 5 seconds...\n")
                 checkForIncomingMail()
+                i=0
                 #return False
+            time.sleep(1)
+
+def decodeData(data2decode):    # This function takes out data and converts it into variables
+    WDRPM=data2decode[0:4]
+    WDFAN=data2decode[4:6]
+    WDTEMP=data2decode[6:8]
+    WDBACKLIGHT=data2decode[8:10]
+    WDLED=data2decode[10:12]
+    WDBLINK=data2decode[12:13]
+    WDLEDPULSE=data2decode[13:14]
+    WDDRiVE=data2decode[14:16]      
+
+    print("RPM: " + WDRPM)
+    print("FAN: " + WDRPM)
+    print("TEMP: " + WDTEMP)
+    print("BACKLIGHT: " + WDBACKLIGHT)
+    print("LED: " + WDLED)
+    print("LED BLK: " + WDBLINK)
+    print("LED PLS: " + WDLEDPULSE)
+    print("UNASSIGNED: " + WDDRiVE)
+
+def getButton(which):
+    global WDALERT
+    while True:
+        print("getting button")
+        checkForIncomingMail()
+        time.sleep(1)
+        print(WDALERT)
+        if which == WDALERT:
+            WDALERT=""
+            print("breaking out")
+            return True
+        #else:
+        #    return False
+
+def getButtonidk():
+    global WDALERT
+    while True:
+        print("getting button")
+        checkForIncomingMail()
+        time.sleep(1)
+        print(WDALERT)
+        if WDALERT != "":
+            uh = WDALERT
+            WDALERT=""
+            if uh == btnU:
+                return "UP"
+            elif uh == btnD:
+                return "DN"
+            elif uh == btnH:
+                return "HO"
+            return
+
+def getButtonHHold(which):
+    global WDALERT
+    while True:
+        print("getting button hold")
+        checkForIncomingMail()
+        time.sleep(1)
+        print(WDALERT)
+        if which == WDALERT:
+            WDALERT=""
+            time.sleep(3)
+            Send("STA")#62active 6a non act
+            time.sleep(1)
+
+            time.sleep(30)
+
+
+
+            WDALERT=""
+            print("breaking out")
+            return True
+        #else:
+        #    return False
+###########################################################################
+#############################   Pages   ###################################
+###########################################################################
+def tutPage():
+    Send(["FAN=32","LN1=UI Guide?    NO>","LN2=            YES>"])
+   
+    if getButton(btnD):
+        Send(["LED=04","FAN=10","LN1=  Hello! I can","LN2=be slow to react"])
+        time.sleep(5)
+    
+    Send(["LN1=  So please be","LN2=   patient :)"])
+    time.sleep(8)
+    Send(["LN1=    Lets Get","LN2=   Started!!!"])
+    time.sleep(8)
+
+    Send(["LN1=  -Navigation-","LN2="])
+    time.sleep(8)
+    Send(["LN1=Use Arrows To  >","LN2=Scroll Pages   >"])
+    time.sleep(8)
+    Send(["LN1=Try It! Goto","LN2=Next Page      >>"])
+
+    if getButton(btnD):
+        Send(["LN1=When on a screen","LN2=thats interactiv"])
+        time.sleep(5)
+        Send(["LED=14","LN1=the MENU button","LN2=will illuminate"])
+        time.sleep(5)
+        Send(["LED=14","LN1=   Learn More","LN2=    >ENTER<"])
+
+    if getButton(btnH):
+        Send(["LED=0C","PLS=00","LN1=Or it will show","LN2=red to EXIT"])
+        time.sleep(5)
+    
+    Send(["LED=14","LN1=  -STATUS LED-","LN2=    >START<"])
+    if getButton(btnH):
+        Send(["LED=04","LN1=Scroll to Learn>","LN2=about each state"])
+
+    sp=0
+    cn=0
+    while True:
+        pushed = getButtonidk()
+        if pushed == "UP":
+            if sp > 8: 
+                sp=1
+            else:
+                sp = sp + 1
+            cn=True
+        elif pushed == "DN":
+            if sp == 0: 
+                sp=8
+            else:
+                sp = sp - 1
+            cn=True
+        elif pushed == "HO" and sp == 8:
+            Send(["LED=01","LN1=    TrueNAS","LN2=--F --F 83F 95F"])
+            break
+
+        if cn==True:
+            print(sp)
+            if sp == 1:
+                Send(["LED=00","BLK=01","LN1=OS Booting","LN2=Please wait..."])
+            elif sp == 2:
+                Send(["LED=00","BLK=02","LN1=WDHW Backend","LN2=NOT RUNNING"])
+            elif sp == 3:
+                Send(["LED=00","BLK=06","LN1=Backend: Online","LN2=Software: Offline"])
+            elif sp == 4:
+                Send(["LED=06","BLK=00","LN1=Backend: Online","LN2=Software: Loading"])
+            elif sp == 5:
+                Send(["LED=01","PLS=00","LN1=All Systems","LN2=Opperational"])
+            elif sp == 6:
+                Send(["LED=00","PLS=01","LN1=Sleep Mode","LN2=Fully Opperational"])
+            elif sp == 7:
+                Send(["LED=01","PLS=00","BLK=02","LN1=System","LN2=Notification"])
+            elif sp == 8:
+                Send(["LED=00","BLK=00","PLS=00","LN1=     System","LN2=     >EXIT<"])
+
+    print("tut done")
 
         
-def servOffline():
-    data = "OFFLINE\n\n\n"
-    #print(data)
 
-    with open('daemonin.txt', 'w') as file:
-        file.writelines( data )
-    file.close
+    
+
+
 ###########################################################################
 #############################   MAIN   ####################################
 ###########################################################################
-def execute_app():
-    time.sleep(1)
+def execute_app():       # Main Execution Function
+    global backendState
+    global WDALERT
     count = 0
     print("Program Status: [ONLINE]")
+    ProgramHealth="ONLINE"
+    WDALERT=""
+
+    # Start Loop - Checks for the backend being online before doing anything, timeouts after 60 seconds.
     while True:
-        count = count + 1 
-        backend=backendHealthCheck()
+        if count == 0:
+            backendHealthCheck()
+            print("Backend Server Status: [" + backendState + "]")
         if count > 60:
             print("Backend server failed to come online after 60 seconds... exiting...")
+            backendState="OFFLINE"
             quit()
+        count = count + 1 
+        
 
-        if backend == "ONLINE":
-            print("Backend Server Status: [ONLINE] - Took [" + str(count) + "] Seconds")
-            Handshake = Send("LED=04")
-            print(Handshake)
+        # The backend server daemon is ONLINE! LETS GET PUMPING!!
+        if backendState == "ONLINE":
+            print("Took [" + str(count) + "] Seconds To Do So.")
+            count=0
+            Handshake = Send(["LN1=   Welcome To", "LN2=    TrueNAS!", "LED=01"]) # The Two programs take a few seconds to allign themselves, once this command goes through. We are set.
+
+            # Main Loop
+            Send(["LN1=    TrueNAS","LN2=--F --F --F --F"])
+            tutPage()
             while True:
-                Handshake = Send("LED=04")
-                time.sleep(5)
+                if backendState == "OFFLINE": break
                 checkForIncomingMail()
-                #Send("LED=03")
-                #time.sleep(5)
-            
-def main():
-    try:
-        execute_app()
-    finally:
-        servOffline()
+                time.sleep(1)
 
+def terminate_app():     # Function used when program terminates for any reason
+    with open('daemonin.txt', 'w') as fileout: fileout.writelines( "OFFLINE\n\n\n" )
+    fileout.close
+
+def main():
+    try:     # Run Man Application
+        execute_app()
+    finally: # If anthing happends to the Main Application, run this
+        terminate_app()
 
 if __name__=='__main__':
     main()
